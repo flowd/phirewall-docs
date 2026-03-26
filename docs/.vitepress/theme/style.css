@@ -1,0 +1,304 @@
+/* ── Brand colours — warm ember palette, WCAG AA compliant ──
+ *
+ * Derived from the Phirewall logo's fire/orange tones.
+ *
+ * Light mode
+ *   brand-1 (#c2410c, orange-700):  5.4 : 1 on white — primary links & buttons
+ *   brand-2 (#9a3412, orange-800):  7.5 : 1 on white — hover states
+ *   brand-3 (#ea580c, orange-600):  decorative only (borders, gradients)
+ *   brand-soft: tinted background
+ *
+ * Dark mode (--vp-c-bg ≈ #1b1b1f)
+ *   brand-1 (#fb923c, orange-400):  7.0 : 1 on dark bg
+ *   brand-2 (#fdba74, orange-300): 10.0 : 1 on dark bg
+ *   brand-3 (#ea580c, orange-600):  decorative
+ */
+:root {
+  --vp-c-brand-1: #c2410c;
+  --vp-c-brand-2: #9a3412;
+  --vp-c-brand-3: #ea580c;
+  --vp-c-brand-soft: rgba(234, 88, 12, 0.10);
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(135deg, #c2410c, #ea580c);
+
+  /* Override VitePress button brand — default maps to brand-3 (#ea580c)
+   * which fails WCAG AA with white text (3.56:1). Use brand-1 instead.
+   * #fff on #c2410c = 5.18:1 ✓  |  #fff on #9a3412 = 7.31:1 ✓ */
+  --vp-button-brand-bg: var(--vp-c-brand-1);
+  --vp-button-brand-hover-bg: var(--vp-c-brand-2);
+  --vp-button-brand-active-bg: var(--vp-c-brand-2);
+}
+
+.dark {
+  color-scheme: dark;
+  --vp-c-brand-1: #fb923c;
+  --vp-c-brand-2: #fdba74;
+  --vp-c-brand-3: #ea580c;
+  --vp-c-brand-soft: rgba(251, 146, 60, 0.10);
+  --vp-home-hero-name-background: linear-gradient(135deg, #fb923c, #fdba74);
+
+  /* Dark mode buttons: dark text on bright orange for contrast.
+   * #451a03 on #fb923c = 6.62:1 ✓  |  #451a03 on #fdba74 = 8.88:1 ✓ */
+  --vp-button-brand-text: #451a03;
+  --vp-button-brand-hover-text: #451a03;
+  --vp-button-brand-active-text: #451a03;
+}
+
+/* ── Keyboard focus indicators (WCAG 2.4.7) ── */
+*:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ── Reduced motion for vestibular disorders ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Visually hidden — screen-reader-only text (global utility) ── */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Logo fix: ensure proper sizing in nav and sidebar ── */
+.VPNavBarTitle .logo {
+  height: 28px;
+  width: auto;
+}
+
+.VPSidebar .logo {
+  height: 24px;
+  width: auto;
+}
+
+/* Hero image sizing */
+.VPHero .image-src {
+  max-width: 200px;
+  height: auto;
+}
+
+/* ── Professional services banner at bottom of doc pages ── */
+.services-banner {
+  margin-top: 4rem;
+  padding: 1.5rem 2rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--vp-c-divider);
+  border-left: 3px solid var(--vp-c-brand-3);
+  background: var(--vp-c-bg-soft);
+}
+
+.services-banner-heading {
+  margin: 0 0 0.5rem 0;
+  color: var(--vp-c-brand-1);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.services-banner p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+}
+
+.services-banner a {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.services-banner a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* ── Hide VitePress HR and h2 border in custom home content ── */
+.VPHome > .vp-doc hr:first-child,
+.VPHome .vp-doc > hr {
+  display: none;
+}
+
+/* ── Homepage professional services section ── */
+.services-home {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: 2rem 0 3rem;
+}
+
+.services-home-inner {
+  border-radius: 1rem;
+  border: 1px solid var(--vp-c-brand-3);
+  background: var(--vp-c-bg-soft);
+  padding: 3rem;
+  text-align: center;
+  transition: border-color 0.3s;
+}
+
+.services-home-inner:hover {
+  animation: border-pulse 2s ease-in-out infinite;
+}
+
+@keyframes border-pulse {
+  0%, 100% { border-color: var(--vp-c-brand-3); }
+  50% { border-color: var(--vp-c-brand-2); }
+}
+
+/* Override vp-doc h2 border-top inside services section */
+.services-home h2 {
+  margin: 0 0 1rem 0;
+  padding-top: 0;
+  border-top: none;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--vp-c-text-1);
+}
+
+.services-home p {
+  margin: 0 auto 2rem;
+  max-width: 1000px;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--vp-c-text-2);
+}
+
+.services-home p a {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.services-home p a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.services-home-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+  text-align: left;
+}
+
+@media (max-width: 1024px) {
+  .services-home-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .services-home-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.services-home-grid > div {
+  padding: 1.25rem;
+  border-radius: 0.5rem;
+  background: var(--vp-c-bg-soft);
+  border: 1px solid var(--vp-c-divider);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+}
+
+.services-home-grid > div strong {
+  color: var(--vp-c-text-1);
+}
+
+.services-home-contact {
+  margin: 0 0 0.75rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--vp-c-text-1);
+}
+
+.services-home-cta {
+  display: inline-block;
+  padding: 0.75rem 2rem;
+  border-radius: 2rem;
+  background: var(--vp-c-brand-1);
+  color: #fff !important;
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-decoration: none !important;
+  transition: background 0.2s, color 0.2s;
+}
+
+/* Dark mode: dark text on bright orange for contrast.
+ * #451a03 on #fb923c = 6.62:1 ✓  |  #451a03 on #fdba74 = 8.88:1 ✓ */
+.dark .services-home-cta {
+  color: #451a03 !important;
+}
+
+.services-home-cta:hover {
+  background: var(--vp-c-brand-2);
+  text-decoration: none !important;
+}
+
+.services-home-cta:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.dark .services-home-cta:focus-visible {
+  outline-color: #1b1b1f;
+}
+
+.services-home-tagline {
+  font-size: 0.9rem;
+  font-style: italic;
+  color: var(--vp-c-text-2);
+  margin: 0 auto 1.5rem;
+}
+
+/* ── Modern layout refinements ── */
+
+/* Feature cards on homepage */
+.VPFeatures .VPFeature {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.VPFeatures .VPFeature:hover {
+  border-color: var(--vp-c-brand-3);
+  box-shadow: 0 2px 12px var(--vp-c-brand-soft);
+}
+
+/* Sidebar group titles */
+.VPSidebar .group .title {
+  letter-spacing: 0.02em;
+}
+
+/* Service grid cards — no hover lift (cards are not links) */
+
+/* Softer code blocks */
+.vp-doc div[class*='language-'] {
+  border-radius: 10px;
+}
+
+/* Refine hero section spacing */
+.VPHero .main .name {
+  letter-spacing: -0.02em;
+}
+
+.VPHero .main .text {
+  letter-spacing: -0.01em;
+}
