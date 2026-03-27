@@ -712,7 +712,7 @@ $config->setFailOpen(false);
 
 ## Response Headers
 
-Blocked responses always include `Retry-After` where applicable. Diagnostic `X-Phirewall` headers are opt-in:
+Diagnostic `X-Phirewall` headers are opt-in and can be added to blocked or safelisted responses:
 
 ```php
 $config->enableResponseHeaders();
@@ -723,7 +723,7 @@ $config->enableResponseHeaders();
 | `X-Phirewall` | Yes | Block type: `blocklist`, `throttle`, `fail2ban`, or `allow2ban` |
 | `X-Phirewall-Matched` | Yes | Name of the rule that triggered |
 | `X-Phirewall-Safelist` | Yes | Name of the safelist rule that matched |
-| `Retry-After` | No | Seconds until the rate limit window resets (429 and allow2ban only) |
+| `Retry-After` | No | Seconds until the client may retry (throttles and allow2ban bans) |
 
 ::: warning
 Diagnostic headers reveal internal rule names and firewall topology. Only enable them in development or staging environments.
