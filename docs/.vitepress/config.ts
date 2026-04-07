@@ -47,6 +47,7 @@ export default defineConfig({
       {
         text: 'Advanced',
         items: [
+          { text: 'Architecture', link: '/advanced/architecture' },
           { text: 'Dynamic Throttle & Sliding Window', link: '/advanced/dynamic-throttle' },
           { text: 'Request Context', link: '/advanced/request-context' },
           { text: 'Track & Notifications', link: '/advanced/track-notifications' },

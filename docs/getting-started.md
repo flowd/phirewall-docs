@@ -678,7 +678,7 @@ echo "Status: " . $response->getStatusCode() . "\n";
 
 ## Evaluation Order
 
-Phirewall evaluates rules in a strict, deterministic order. The first match wins.
+Phirewall evaluates rules in a strict, deterministic order using an [evaluator pipeline](/advanced/architecture). The first match wins.
 
 ```text
 Request --> Track (passive) --> Safelist --> Blocklist --> Fail2Ban --> Throttle --> Allow2Ban --> Pass
