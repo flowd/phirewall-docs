@@ -345,11 +345,112 @@ insert into
 `@pmFromFile` includes path traversal protection. Paths containing `..` are rejected to prevent loading files outside the rules directory.
 :::
 
+## Architecture
+
+The OWASP CRS engine uses a strategy pattern to keep rule evaluation extensible and maintainable. Each `CoreRule` delegates two concerns to dedicated strategy classes:
+
+- **Variable collectors** (`VariableCollectorInterface`) extract target values from the PSR-7 request
+- **Operator evaluators** (`OperatorEvaluatorInterface`) match those values against the rule's pattern
+
+```text
+SecRule ARGS "@rx (?i)union.*select" "id:942100,phase:2,deny,msg:'SQLi'"
+       ^^^^  ^^^                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+       |     |                       Actions (parsed into a map)
+       |     Operator --> OperatorEvaluatorFactory --> RegexEvaluator
+       Variable --------> VariableCollectorFactory --> ArgsCollector
+```
+
+When a rule is constructed, the factories resolve the variable names and operator into concrete strategy instances. On each request, `CoreRule::matches()` collects values via the variable collectors and passes them to the operator evaluator.
+
+### Variable Collectors
+
+Each CRS variable maps to a `VariableCollectorInterface` implementation:
+
+| Variable | Collector Class | Source |
+|----------|----------------|--------|
+| `ARGS` | `ArgsCollector` | Query params + parsed body (names and values) |
+| `ARGS_NAMES` | `ArgsNamesCollector` | Query param + body parameter names |
+| `REQUEST_URI` | `RequestUriCollector` | Full URI including query string |
+| `REQUEST_METHOD` | `RequestMethodCollector` | HTTP method |
+| `QUERY_STRING` | `QueryStringCollector` | Raw query string |
+| `REQUEST_FILENAME` | `RequestFilenameCollector` | URI path without query string |
+| `REQUEST_HEADERS` | `RequestHeadersCollector` | All header values |
+| `REQUEST_HEADERS_NAMES` | `RequestHeadersNamesCollector` | Header names |
+| `REQUEST_COOKIES` | `RequestCookiesCollector` | All cookie values |
+| `REQUEST_COOKIES_NAMES` | `RequestCookiesNamesCollector` | Cookie names |
+
+### Operator Evaluators
+
+Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
+
+| Operator | Evaluator Class | Behavior |
+|----------|----------------|----------|
+| `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode |
+| `@contains` | `ContainsEvaluator` | Case-insensitive substring search |
+| `@streq` | `StringEqualEvaluator` | Case-insensitive exact match |
+| `@startswith` / `@beginswith` | `StartsWithEvaluator` | Case-insensitive prefix match |
+| `@endswith` | `EndsWithEvaluator` | Case-insensitive suffix match |
+| `@pm` | `PhraseMatchEvaluator` | Multi-phrase case-insensitive match |
+| `@pmFromFile` | `PhraseMatchFromFileEvaluator` | Phrase match from file with path traversal protection |
+
+Unsupported operators resolve to `UnsupportedOperatorEvaluator`, which never matches (safe no-op).
+
+### Adding Custom Operators
+
+Implement `OperatorEvaluatorInterface` and register it in `OperatorEvaluatorFactory`:
+
+```php
+namespace Flowd\Phirewall\Owasp\Operator;
+
+final readonly class IpMatchEvaluator implements OperatorEvaluatorInterface
+{
+    /** @param list<string> $cidrs */
+    public function __construct(private array $cidrs) {}
+
+    /** @param list<string> $values */
+    public function evaluate(array $values): bool
+    {
+        foreach ($values as $value) {
+            // Check if $value falls within any CIDR range
+            if ($this->matchesCidr($value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function matchesCidr(string $ip): bool
+    {
+        // CIDR matching logic
+    }
+}
+```
+
+### Adding Custom Variables
+
+Implement `VariableCollectorInterface` and register it in `VariableCollectorFactory`:
+
+```php
+namespace Flowd\Phirewall\Owasp\Variable;
+
+use Psr\Http\Message\ServerRequestInterface;
+
+final readonly class RequestBodyCollector implements VariableCollectorInterface
+{
+    /** @return list<string> */
+    public function collect(ServerRequestInterface $serverRequest): array
+    {
+        $body = (string) $serverRequest->getBody();
+        return $body !== '' ? [$body] : [];
+    }
+}
+```
+
 ## Performance
 
 ### Caching
 
-OWASP rules are compiled once when loaded and cached internally. Regular expressions are compiled on first use and phrase lists are pre-processed for efficient matching. There is no need to cache the `CoreRuleSet` externally.
+Each operator evaluator and variable collector is instantiated once per rule at construction time and reused across requests. Regular expressions are compiled on first use (with PCRE's internal JIT cache), phrase lists from `@pmFromFile` are loaded and cached per file path, and all other operators use simple string operations with no additional overhead. There is no need to cache the `CoreRuleSet` externally.
 
 ### Operator Performance
 
