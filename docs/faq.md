@@ -179,17 +179,23 @@ $context?->recordFailure('login-failures', $ip);
 
 The matching Fail2Ban rule should use `filter: fn($request): bool => false` so it only counts failures signaled programmatically.
 
-### Can I still use the old fluent API?
+### The old fluent API methods are gone — what do I use now?
 
-The old fluent API (`$config->safelist()`, `$config->throttle()`, etc.) still works via the `DeprecatedConfigMethods` trait, but it will be removed in a future version. Migrate to the section API:
+The deprecated convenience methods (`$config->safelist()`, `$config->throttle()`, etc.) have been removed. Use the section API instead:
 
 ```php
-// Old (deprecated)
+// Old (removed)
 $config->safelist('health', fn($request) => ...);
+$config->throttle('ip', 100, 60, fn($request) => ...);
+$config->fail2ban('login', 5, 300, 3600, filter: ..., key: ...);
 
-// New (recommended)
+// New (section API)
 $config->safelists->add('health', fn($request) => ...);
+$config->throttles->add('ip', 100, 60, fn($request) => ...);
+$config->fail2ban->add('login', threshold: 5, period: 300, banSeconds: 3600, filter: ..., key: ...);
 ```
+
+See the [Getting Started](/getting-started) guide for the full section API reference.
 
 ## Rate Limiting
 

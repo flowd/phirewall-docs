@@ -316,18 +316,20 @@ In production, avoid making synchronous HTTP calls, database writes, or sending 
 
 ## Diagnostics Counters
 
-Phirewall includes a built-in `DiagnosticsCounters` class that implements `EventDispatcherInterface`. Pass it as the event dispatcher to automatically collect counter data for all firewall decisions.
+Phirewall includes a built-in `DiagnosticsCounters` class that collects counter data for all firewall decisions. Wrap it with `DiagnosticsDispatcher` and pass it as the event dispatcher:
 
 ```php
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\DiagnosticsCounters;
+use Flowd\Phirewall\Config\DiagnosticsDispatcher;
 
-$diagnostics = new DiagnosticsCounters();
-$config = new Config($cache, $diagnostics);
+$counters = new DiagnosticsCounters();
+$dispatcher = new DiagnosticsDispatcher($counters);
+$config = new Config($cache, $dispatcher);
 
 // ... process requests through the firewall ...
 
-$counters = $diagnostics->all();
+$allCounters = $counters->all();
 ```
 
 The returned array is organized by category, each with a total and a breakdown by rule:
@@ -358,14 +360,13 @@ Categories tracked: `safelisted`, `blocklisted`, `throttle_exceeded`, `fail2ban_
 ### Exposing as a Prometheus-Style Metrics Endpoint
 
 ```php
-use Flowd\Phirewall\Config\DiagnosticsCounters;
 use Nyholm\Psr7\Response;
 
-// $diagnostics was passed to Config as the event dispatcher
-$counters = $diagnostics->all();
+// $counters is the DiagnosticsCounters instance from setup above
+$allCounters = $counters->all();
 
 $output = '';
-foreach ($counters as $category => $data) {
+foreach ($allCounters as $category => $data) {
     $output .= "phirewall_{$category}_total {$data['total']}\n";
     foreach ($data['by_rule'] as $rule => $count) {
         $output .= "phirewall_{$category}_by_rule{rule=\"{$rule}\"} {$count}\n";

@@ -177,23 +177,42 @@ Since this event fires on every request, expensive operations in its handler dir
 
 ## Diagnostics Counters
 
-Phirewall provides a built-in `DiagnosticsCounters` class that implements `EventDispatcherInterface`. It collects lightweight, in-memory counters for every decision category -- perfect for health endpoints, dashboards, and quick debugging.
+Phirewall provides a built-in `DiagnosticsCounters` class that collects lightweight, in-memory counters for every decision category — perfect for health endpoints, dashboards, and quick debugging.
+
+`DiagnosticsCounters` is an observer, not a dispatcher. To use it, wrap it with `DiagnosticsDispatcher`:
 
 ### Setting Up
 
 ```php
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\DiagnosticsCounters;
+use Flowd\Phirewall\Config\DiagnosticsDispatcher;
 use Flowd\Phirewall\Store\InMemoryCache;
 
-$diagnostics = new DiagnosticsCounters();
-$config = new Config(new InMemoryCache(), $diagnostics);
+$counters = new DiagnosticsCounters();
+$dispatcher = new DiagnosticsDispatcher($counters);
+$config = new Config(new InMemoryCache(), $dispatcher);
+```
+
+### Combining with a Real Dispatcher
+
+`DiagnosticsDispatcher` can wrap an existing PSR-14 dispatcher so events are both counted and forwarded to your listeners:
+
+```php
+use Flowd\Phirewall\Config\DiagnosticsCounters;
+use Flowd\Phirewall\Config\DiagnosticsDispatcher;
+
+$counters = new DiagnosticsCounters();
+$dispatcher = new DiagnosticsDispatcher($counters, $myPsr14Dispatcher);
+$config = new Config(new InMemoryCache(), $dispatcher);
+
+// Events are counted by $counters AND dispatched to $myPsr14Dispatcher
 ```
 
 ### Reading Counters
 
 ```php
-$counters = $diagnostics->all();
+$allCounters = $counters->all();
 ```
 
 Returns an array organized by category, each with a total and a per-rule breakdown:
@@ -229,10 +248,14 @@ The `passed` and `fail2ban_blocked` categories are derived from the `Performance
 ### Resetting Counters
 
 ```php
-$diagnostics->reset();
+$counters->reset();
 ```
 
 This clears all counters. Useful in tests or if you periodically flush metrics to an external system.
+
+::: tip
+Access the counters from the dispatcher at any time via `$dispatcher->counters()`.
+:::
 
 ## Integration Examples
 
@@ -459,11 +482,11 @@ You can serve the built-in `DiagnosticsCounters` as a Prometheus-compatible text
 
 ```php
 // In a /metrics route handler
-// $diagnostics is the DiagnosticsCounters instance passed to Config
-$counters = $diagnostics->all();
+// $counters is the DiagnosticsCounters instance from setup above
+$allCounters = $counters->all();
 
 $output = '';
-foreach ($counters as $category => $data) {
+foreach ($allCounters as $category => $data) {
     $output .= "# HELP phirewall_{$category}_total Total {$category} events\n";
     $output .= "# TYPE phirewall_{$category}_total counter\n";
     $output .= "phirewall_{$category}_total {$data['total']}\n";
