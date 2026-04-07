@@ -174,7 +174,7 @@ See [Rate Limiting](/features/rate-limiting) and [Dynamic Throttle](/advanced/dy
 
 ### Fail2Ban (Brute Force Protection)
 
-Automatically ban clients after repeated failures. The filter evaluates each incoming request; matching requests increment a failure counter, and the client is banned when the threshold is reached.
+Automatically ban clients after repeated failures. The filter evaluates each incoming request; matching requests increment a failure counter, and the client is banned when the count exceeds the threshold (e.g., threshold=5 allows 5 failures, the 6th triggers the ban).
 
 ```php
 // Ban IPs that POST to /login more than 5 times in 5 minutes
@@ -192,7 +192,7 @@ For post-handler failure signaling (e.g., recording failures after verifying cre
 
 ### Allow2Ban (Request Volume Banning)
 
-Allow2Ban is the inverse of Fail2Ban: it counts every request for a key and bans after a threshold, without needing a filter predicate.
+Allow2Ban is the inverse of Fail2Ban: it counts every request for a key and bans when the count exceeds the threshold, without needing a filter predicate.
 
 ```php
 // Ban any IP that sends more than 1000 requests in 60 seconds

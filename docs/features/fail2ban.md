@@ -8,7 +8,7 @@ Fail2Ban and Allow2Ban are Phirewall's automatic banning mechanisms. They monito
 
 ## Fail2Ban
 
-Fail2Ban counts requests that match a **filter** condition. When the count for a given key reaches the threshold within the observation period, the key is banned.
+Fail2Ban counts requests that match a **filter** condition. When the count for a given key exceeds the threshold within the observation period, the key is banned.
 
 ### How It Works
 
@@ -26,7 +26,7 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
             Increment failure counter
                     |
                     v
-            Counter >= threshold? --> No --> Continue to throttle rules
+            Counter > threshold? --> No --> Continue to throttle rules
                     |
                     Yes
                     |
@@ -36,7 +36,7 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
 
 1. A **filter** closure checks each incoming request for a condition (e.g., a POST to `/login`)
 2. Matches are counted per **key** (e.g., IP address) within a time **period**
-3. When the count reaches the **threshold**, the key is **banned** for a configurable duration
+3. When the count **exceeds** the **threshold**, the key is **banned** for a configurable duration (e.g., threshold=5 allows 5 failures, the 6th triggers the ban)
 4. Banned keys receive `403 Forbidden` immediately, without further rule evaluation
 
 ### Configuration
@@ -55,7 +55,7 @@ $config->fail2ban->add(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier |
-| `$threshold` | `int` | Number of filter matches before ban (must be >= 1) |
+| `$threshold` | `int` | Number of filter matches allowed before ban (must be >= 1). The ban triggers on failure N+1. |
 | `$period` | `int` | Time window for counting matches in seconds (must be >= 1) |
 | `$ban` | `int` | Ban duration in seconds (must be >= 1) |
 | `$filter` | `Closure` | `fn(ServerRequestInterface): bool` -- return `true` to count as a match |
@@ -278,7 +278,7 @@ RequestContext is the most accurate approach because it only increments the fail
 
 ## Allow2Ban {#allow2ban}
 
-Allow2Ban is a **dedicated section** (`$config->allow2ban`) with its own API. It is the inverse of Fail2Ban: instead of counting only filtered "bad" requests, it counts **every request** for a given key and bans once the threshold is exceeded. Think of it as "n requests and you're out."
+Allow2Ban is a **dedicated section** (`$config->allow2ban`) with its own API. It is the inverse of Fail2Ban: instead of counting only filtered "bad" requests, it counts **every request** for a given key and bans once the count exceeds the threshold. Think of it as "n requests allowed, then you're out."
 
 ### How It Works
 
@@ -291,7 +291,7 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
             Increment request counter
                     |
                     v
-            Counter >= threshold? --> No --> Continue to throttle rules
+            Counter > threshold? --> No --> Continue to throttle rules
                     |
                     Yes
                     |
@@ -316,7 +316,7 @@ $config->allow2ban->add(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier |
-| `$threshold` | `int` | Number of requests before ban (must be >= 1) |
+| `$threshold` | `int` | Number of requests allowed before ban (must be >= 1). The ban triggers on request N+1. |
 | `$period` | `int` | Time window for counting requests in seconds (must be >= 1) |
 | `$banSeconds` | `int` | Ban duration in seconds (must be >= 1) |
 | `$key` | `Closure` | `fn(ServerRequestInterface): ?string` -- return key to track, or `null` to skip |
