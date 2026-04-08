@@ -215,8 +215,20 @@ $redis = new PredisClient([
 
 RedisCache is designed to fail open. If Redis is unavailable, `increment()` returns `0`, which means no throttle or Fail2Ban rule will trigger. This prevents Redis outages from blocking all traffic to your application.
 
+When `increment()` catches a Redis error, it emits an `E_USER_WARNING` via `trigger_error()` before returning `0`. This gives you visibility into cache failures without breaking the request flow. You can capture these warnings in your application's error handler or logging setup:
+
+```php
+set_error_handler(function (int $errno, string $message): bool {
+    if (str_starts_with($message, 'RedisCache::increment()')) {
+        // Log or alert on Redis failures
+        error_log('[Phirewall] ' . $message);
+    }
+    return false; // continue with the normal error handler
+});
+```
+
 ::: tip
-In a production environment, monitor your Redis connection. A down Redis means your firewall rules are not being enforced.
+In a production environment, monitor your Redis connection. A down Redis means your firewall rules are not being enforced. Watch for `E_USER_WARNING` messages from `RedisCache::increment()` in your application logs as an early signal of Redis connectivity issues.
 :::
 
 ### When to Use

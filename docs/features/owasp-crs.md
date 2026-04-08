@@ -385,7 +385,7 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 
 | Operator | Evaluator Class | Behavior |
 |----------|----------------|----------|
-| `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode |
+| `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode; values exceeding 8 KiB are skipped (not matched) |
 | `@contains` | `ContainsEvaluator` | Case-insensitive substring search |
 | `@streq` | `StringEqualEvaluator` | Case-insensitive exact match |
 | `@startswith` / `@beginswith` | `StartsWithEvaluator` | Case-insensitive prefix match |
@@ -394,6 +394,12 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 | `@pmFromFile` | `PhraseMatchFromFileEvaluator` | Phrase match from file with path traversal protection |
 
 Unsupported operators resolve to `UnsupportedOperatorEvaluator`, which never matches (safe no-op).
+
+::: warning ReDoS protection: 8 KiB length guard on `@rx`
+`RegexEvaluator` skips any value whose byte length exceeds 8,192 bytes — the value is treated as non-matching. This is an intentional trade-off: running PCRE on unbounded attacker-controlled input risks catastrophic backtracking that can freeze the PHP process (ReDoS). Skipping overlength values mirrors the behavior of standard WAFs such as ModSecurity's `SecRequestBodyLimit`.
+
+In practice, legitimate request values (query parameters, header values, cookie values) are rarely larger than a few kilobytes. If you are matching multi-megabyte request bodies via `@rx`, consider pre-processing them before passing to the firewall.
+:::
 
 ### Adding Custom Operators
 

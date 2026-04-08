@@ -224,6 +224,7 @@ Returns an array organized by category, each with a total and a per-rule breakdo
     'throttle_exceeded' => ['total' => 2,   'by_rule' => ['ip-limit' => 2]],
     'fail2ban_blocked'  => ['total' => 3,   'by_rule' => ['login' => 3]],
     'fail2ban_banned'   => ['total' => 1,   'by_rule' => ['login' => 1]],
+    'allow2ban_banned'  => ['total' => 2,   'by_rule' => ['high-volume' => 2]],
     'track_hit'         => ['total' => 50,  'by_rule' => ['api-calls' => 50]],
     'passed'            => ['total' => 1000, 'by_rule' => []],
 ]
@@ -238,6 +239,7 @@ Returns an array organized by category, each with a total and a per-rule breakdo
 | `throttle_exceeded` | `ThrottleExceeded` | Requests that exceeded rate limits |
 | `fail2ban_banned` | `Fail2BanBanned` | New Fail2Ban bans issued |
 | `fail2ban_blocked` | `PerformanceMeasured` | Requests blocked by existing Fail2Ban bans |
+| `allow2ban_banned` | `Allow2BanBanned` | New Allow2Ban bans issued |
 | `track_hit` | `TrackHit` | Tracking rule matches |
 | `passed` | `PerformanceMeasured` | Requests that passed all checks |
 
