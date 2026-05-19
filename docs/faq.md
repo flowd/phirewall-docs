@@ -160,7 +160,7 @@ See [PSR-17 Factories](/advanced/psr17) for full details.
 
 **Fail2Ban** requires a filter closure that identifies "bad" requests. Only matching requests increment the counter. This is ideal for brute force protection on specific endpoints.
 
-**Allow2Ban** counts every request for a given key with no filter. It bans when the total volume exceeds the threshold. This is ideal for detecting and blocking aggressive scrapers or bots.
+**Allow2Ban** counts every request for a given key with no filter. It bans as soon as the total volume reaches the threshold. This is ideal for detecting and blocking aggressive scrapers or bots.
 
 See [Fail2Ban & Allow2Ban](/features/fail2ban) for details.
 

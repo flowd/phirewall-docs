@@ -96,14 +96,9 @@ Checks blocklist rules. On the first match, dispatches `BlocklistMatched`, sets 
 For each fail2ban rule:
 
 1. Checks if the key is already banned -- if so, returns a blocked result immediately
-2. If the filter matches, increments the failure counter and bans if the threshold is exceeded
+2. If the filter matches, increments the failure counter and bans if the threshold is reached
 
-The threshold semantics differ between pre-handler and post-handler modes:
-
-| Mode | Comparison | Behavior |
-|------|------------|----------|
-| Pre-handler (during `decide()`) | count **>** threshold | Allows N matches, bans on N+1 |
-| Post-handler (via `processRecordedFailure()`) | count **>=** threshold | Bans on the Nth recorded failure |
+Both the pre-handler path (during `decide()`) and the post-handler path (via `processRecordedFailure()`) use the same `count >= threshold` comparison: the Nth matching request triggers the ban and is itself blocked. This matches rack-attack's `maxretry` semantics and is consistent with Allow2Ban.
 
 See [Request Context](/advanced/request-context) for post-handler failure signaling.
 
@@ -120,7 +115,7 @@ For each throttle rule:
 Unlike other evaluators, Allow2BanEvaluator **processes all rules before returning**. For each allow2ban rule:
 
 1. If the key is already banned, records the block
-2. Otherwise, increments the counter and bans if the threshold is exceeded
+2. Otherwise, increments the counter and bans if the threshold is reached (`count >= threshold`)
 
 After processing all rules, it returns the first block found (or `null` if none). This ensures every counter is incremented on every request, even when an earlier rule already triggered a ban.
 
