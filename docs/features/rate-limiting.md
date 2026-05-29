@@ -216,12 +216,15 @@ Phirewall ships with common key extractors for typical rate limiting scenarios:
 |--------|-------------|---------|
 | `KeyExtractors::ip()` | Client IP from `REMOTE_ADDR` | `?string` |
 | `KeyExtractors::clientIp($resolver)` | Client IP via trusted proxy resolver | `?string` |
-| `KeyExtractors::header('X-User-Id')` | Value of a specific header | `?string` |
+| `KeyExtractors::header('X-User-Id')` | Raw value of a specific header | `?string` |
+| `KeyExtractors::hashedHeader('X-Api-Key')` | sha256 fingerprint of a header value | `?string` |
 | `KeyExtractors::method()` | HTTP method (uppercase) | `?string` |
 | `KeyExtractors::path()` | Request path (always returns a value, never skips) | `string` |
 | `KeyExtractors::userAgent()` | User-Agent header value | `?string` |
 
 All extractors except `path()` return `null` when the value is missing or empty, which causes the throttle rule to be skipped for that request.
+
+Prefer `hashedHeader()` over `header()` whenever the header carries a credential (`Authorization`, `Cookie`, `X-Api-Key`, …). The cache backend and ban registry then store the sha256 fingerprint rather than the raw secret, so anyone with read access to the cache cannot recover the credential.
 
 ### Custom Key Extractors
 
