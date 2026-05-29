@@ -53,8 +53,9 @@ $config->fail2ban->add('login-failures',
 // In your login handler:
 if (!$this->authenticate($username, $password)) {
     $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-    $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-    $context?->recordFailure('login-failures', $ip);
+    // No second argument needed -- the firewall extracts the key from the
+    // rule's own keyExtractor against this request.
+    $context?->recordFailure('login-failures');
 }
 ```
 

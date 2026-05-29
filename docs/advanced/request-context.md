@@ -4,7 +4,7 @@ outline: deep
 
 # Request Context
 
-The `RequestContext` API lets your application signal fail2ban failures **from inside the request handler** -- after the firewall has already passed the request through. This solves a fundamental limitation: standard fail2ban filters run _before_ your handler, so they cannot see whether credentials were valid, whether a payment failed, or whether an API key was revoked.
+The `RequestContext` API lets your application signal **fail2ban failures** and **allow2ban hits** from inside the request handler -- after the firewall has already passed the request through. This solves a fundamental limitation: standard pre-handler filters cannot see whether credentials were valid, whether a payment failed, or whether an API key was revoked.
 
 ## The Problem
 
@@ -31,10 +31,10 @@ The flow has three stages:
    └── Attaches a mutable RequestContext to the PSR-7 request attribute
 
 2. Handler runs your application logic
-   └── Retrieves the context and calls recordFailure() if needed
+   └── Retrieves the context and calls recordFailure() / recordHit() if needed
 
 3. Middleware runs post-handler processing
-   └── Processes all recorded failures through the fail2ban engine
+   └── Routes each recorded signal to its fail2ban or allow2ban evaluator
 ```
 
 Here is what happens step by step:
@@ -42,9 +42,9 @@ Here is what happens step by step:
 1. The middleware calls the firewall's `decide()` method on the incoming request
 2. If the request passes (is not blocked), the middleware creates a `RequestContext` and attaches it to the request as a PSR-7 attribute named `phirewall.context`
 3. Your handler receives the request with the attached context
-4. If your handler determines that the request represents a failure (wrong password, invalid API key, etc.), it calls `$context->recordFailure('rule-name', 'key')`
-5. After your handler returns a response, the middleware checks for recorded failures and processes them through the fail2ban counter engine
-6. If the failure count crosses the threshold, the key is banned for future requests
+4. If your handler determines that the request represents a failure, it calls `$context->recordFailure('rule-name')`. For an allow2ban hit, it calls `$context->recordHit('rule-name')` instead. The key is derived from the matching rule's `keyExtractor`; pass an explicit second argument only when the handler knows a value the firewall cannot derive (e.g. a user id from a session).
+5. After your handler returns a response, the middleware processes each recorded signal through the matching counter engine
+6. If the count crosses the threshold, the key is banned for future requests
 
 ## Setup
 
@@ -78,7 +78,7 @@ The filter still exists because the fail2ban rule requires one. Setting it to al
 
 ## Recording Failures in Your Handler
 
-Retrieve the `RequestContext` from the request attribute and call `recordFailure()`:
+Retrieve the `RequestContext` from the request attribute and call `recordFailure()`. The second argument is optional -- when omitted, the firewall reuses the rule's own `keyExtractor` against this request, so the handler doesn't need to know whether the rule keys on IP, header, or anything else:
 
 ```php
 use Flowd\Phirewall\Context\RequestContext;
@@ -98,9 +98,9 @@ class LoginHandler implements RequestHandlerInterface
             /** @var RequestContext|null $context */
             $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 
-            // Signal the failure -- use the null-safe operator for safety
-            $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-            $context?->recordFailure('login-failures', $ip);
+            // Signal the failure -- the firewall derives the key from the
+            // rule's own keyExtractor. Use the null-safe operator for safety.
+            $context?->recordFailure('login-failures');
 
             return new JsonResponse(['error' => 'Invalid credentials'], 401);
         }
@@ -110,9 +110,48 @@ class LoginHandler implements RequestHandlerInterface
 }
 ```
 
+If the handler knows a discriminator that the firewall cannot derive from the request alone (for example, a user id looked up in a session store), pass it as the second argument:
+
+```php
+$context?->recordFailure('login-failures', $userIdFromSession);
+```
+
 ::: warning Rule name must match
-The first parameter to `recordFailure()` must **exactly** match the `name` you used in `$config->fail2ban->add()`. If no matching rule is found, the failure signal is silently ignored.
+The first parameter to `recordFailure()` must **exactly** match the `name` you used in `$config->fail2ban->add()`. If no matching rule is found, the signal is silently ignored.
 :::
+
+## Recording Hits for Allow2Ban
+
+`recordHit()` is the allow2ban counterpart of `recordFailure()`. It signals that something countable happened during the handler (e.g. an expensive operation completed, a webhook delivered a duplicate payload, a third-party API quota was charged) so the count can drive an allow2ban threshold ban:
+
+```php
+use Flowd\Phirewall\KeyExtractors;
+
+// Configure an allow2ban rule. To make the rule count *only* the events
+// recorded by the handler (not every request), have the rule's keyExtractor
+// return null pre-handler -- the firewall then skips counting until the
+// handler signals an explicit key via recordHit().
+$config->allow2ban->add(
+    'expensive-endpoint',
+    threshold: 5,
+    period: 300,
+    banSeconds: 3600,
+    key: fn($request): ?string => null,
+);
+```
+
+In the handler:
+
+```php
+$context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
+
+if ($context !== null && $this->operationWasExpensive($request)) {
+    $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
+    $context->recordHit('expensive-endpoint', $ip);
+}
+```
+
+If the rule's `keyExtractor` returns a value pre-handler (the common case), the second argument to `recordHit()` can be omitted -- the firewall derives the key the same way it does for `recordFailure()`. Note that in that case **both** the pre-handler counter and the handler's `recordHit()` increment the counter, so the threshold should account for the doubled count.
 
 ## API Reference
 
@@ -122,10 +161,11 @@ The `RequestContext` class is a mutable recorder that the middleware attaches to
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `recordFailure()` | `(string $ruleName, string $key): void` | Record a fail2ban failure signal |
+| `recordFailure()` | `(string $ruleName, ?string $key = null): void` | Record a fail2ban failure signal |
+| `recordHit()` | `(string $ruleName, ?string $key = null): void` | Record an allow2ban hit signal |
 | `getResult()` | `(): FirewallResult` | Access the pre-handler firewall decision |
-| `getRecordedFailures()` | `(): list<RecordedFailure>` | Get all recorded failure signals |
-| `hasRecordedSignals()` | `(): bool` | Whether any failures have been recorded |
+| `getRecordedSignals()` | `(): list<RecordedSignal>` | Get all recorded signals (fail2ban + allow2ban) |
+| `hasRecordedSignals()` | `(): bool` | Whether any signals have been recorded |
 
 **Constants:**
 
@@ -133,21 +173,22 @@ The `RequestContext` class is a mutable recorder that the middleware attaches to
 |----------|-------|-------------|
 | `RequestContext::ATTRIBUTE_NAME` | `'phirewall.context'` | PSR-7 request attribute key |
 
-### recordFailure() Parameters
+### recordFailure() / recordHit() Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `$ruleName` | `string` | Must match the `name` of a configured `fail2ban->add()` rule |
-| `$key` | `string` | The discriminator key to count failures against (e.g., IP address, username) |
+| `$ruleName` | `string` | Must match the `name` of a configured `fail2ban->add()` (for `recordFailure`) or `allow2ban->add()` (for `recordHit`) rule |
+| `$key` | `?string` | Optional discriminator override. When `null` (the default), the firewall extracts the key from the rule's own `keyExtractor` against the current request. |
 
-### RecordedFailure
+### RecordedSignal
 
-An immutable value object representing a single failure signal.
+An immutable value object representing a single recorded signal.
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `$ruleName` | `string` | The fail2ban rule this failure is recorded against |
-| `$key` | `string` | The discriminator key |
+| `$ruleName` | `string` | The fail2ban or allow2ban rule this signal is recorded against |
+| `$banType` | `BanType` | `BanType::Fail2Ban` (from `recordFailure()`) or `BanType::Allow2Ban` (from `recordHit()`) |
+| `$key` | `?string` | The discriminator override, or `null` to defer to the rule's `keyExtractor` |
 
 ## Accessing the Firewall Decision
 
@@ -179,10 +220,11 @@ When your handler might run without the Phirewall middleware in the stack (for e
 
 ```php
 $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-$context?->recordFailure('login-failures', $ip);
+$context?->recordFailure('login-failures');
+$context?->recordHit('expensive-endpoint');
 ```
 
-If the middleware is not present, `$context` is `null` and the `recordFailure()` call is silently skipped -- no errors, no side effects. This makes your handler safe to use with or without Phirewall.
+If the middleware is not present, `$context` is `null` and the calls are silently skipped -- no errors, no side effects. This makes your handler safe to use with or without Phirewall.
 
 ## Complete Example
 
@@ -229,8 +271,7 @@ $handler = new class implements RequestHandlerInterface {
         if ($username !== 'admin' || $password !== 'secret') {
             /** @var RequestContext|null $context */
             $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-            $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-            $context?->recordFailure('login-failures', $ip);
+            $context?->recordFailure('login-failures');
 
             return new Response(401, ['Content-Type' => 'application/json'],
                 json_encode(['error' => 'Invalid credentials'])
@@ -339,8 +380,7 @@ class RequestContextTest extends TestCase
             public function handle(ServerRequestInterface $request): \Psr\Http\Message\ResponseInterface
             {
                 $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-                $ip = $request->getServerParams()['REMOTE_ADDR'] ?? '0.0.0.0';
-                $context?->recordFailure('test-rule', $ip);
+                $context?->recordFailure('test-rule');
                 return new Response(401);
             }
         };

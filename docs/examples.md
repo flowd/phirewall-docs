@@ -1020,12 +1020,13 @@ $config->fail2ban->add('login-failures',
 // In your login handler:
 // $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 // if ($loginFailed) {
-//     $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-//     $context?->recordFailure('login-failures', $ip);
+//     // The firewall derives the key from the rule's own keyExtractor
+//     // -- no need to repeat the IP/header/etc. extraction here.
+//     $context?->recordFailure('login-failures');
 // }
 ```
 
-The middleware automatically processes recorded failures after the handler returns. See [Request Context](/advanced/request-context) for the full API.
+The middleware automatically processes recorded signals after the handler returns. Use `$context->recordHit('rule-name')` for allow2ban rules. See [Request Context](/advanced/request-context) for the full API.
 
 ---
 

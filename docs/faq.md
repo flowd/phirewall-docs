@@ -173,11 +173,12 @@ use Flowd\Phirewall\Context\RequestContext;
 
 // In your handler, after authentication fails:
 $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-$ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-$context?->recordFailure('login-failures', $ip);
+$context?->recordFailure('login-failures');
 ```
 
-The matching Fail2Ban rule should use `filter: fn($request): bool => false` so it only counts failures signaled programmatically.
+The second argument to `recordFailure()` is optional -- when omitted, the firewall extracts the discriminator key from the rule's own `keyExtractor`. The matching Fail2Ban rule should use `filter: fn($request): bool => false` so it only counts failures signaled programmatically.
+
+For allow2ban rules, use `$context->recordHit('rule-name')` -- same shape, routed through the allow2ban evaluator instead.
 
 ### The old fluent API methods are gone — what do I use now?
 
