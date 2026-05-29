@@ -1048,12 +1048,13 @@ $config->allow2ban->add('high-volume-ban',
     key: KeyExtractors::ip()
 );
 
-// Ban by API key for authenticated routes
+// Ban by API key for authenticated routes. hashedHeader() stores a sha256
+// fingerprint of the key in the ban registry instead of the raw credential.
 $config->allow2ban->add('api-key-ban',
     threshold: 1000,
     period: 60,
     banSeconds: 300,
-    key: KeyExtractors::header('X-Api-Key')
+    key: KeyExtractors::hashedHeader('X-Api-Key')
 );
 ```
 

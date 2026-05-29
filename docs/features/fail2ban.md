@@ -349,13 +349,15 @@ Ban API keys that exceed expected usage. Unlike rate limiting (which returns 429
 ```php
 use Flowd\Phirewall\KeyExtractors;
 
-// Ban any API key that makes more than 1000 requests in 60 seconds
+// Ban any API key that makes more than 1000 requests in 60 seconds.
+// hashedHeader() stores the sha256 fingerprint instead of the raw key so the
+// ban registry doesn't carry the credential verbatim.
 $config->allow2ban->add(
     name: 'api-key-abuse',
     threshold: 1000,
     period: 60,
     banSeconds: 300,   // 5 minute ban
-    key: KeyExtractors::header('X-Api-Key'),
+    key: KeyExtractors::hashedHeader('X-Api-Key'),
 );
 ```
 
