@@ -193,13 +193,13 @@ Middleware (pre-handler)
 Your Handler
    |
    ├── Checks credentials, validates input, etc.
-   ├── On failure: $context->recordFailure('rule-name', $key)
+   ├── On failure: $context->recordFailure('rule-name')
    |
    v
 Middleware (post-handler)
    |
-   ├── Reads recorded failures from RequestContext
-   ├── Increments fail2ban counters for each recorded failure
+   ├── Reads recorded signals from RequestContext
+   ├── Increments fail2ban / allow2ban counters per signal
    |
    v
 Response
@@ -229,7 +229,7 @@ $config->fail2ban->add(
 
 ### Recording Failures in Your Handler
 
-Inside your request handler, retrieve the `RequestContext` from the request attribute and call `recordFailure()`:
+Inside your request handler, retrieve the `RequestContext` from the request attribute and call `recordFailure()`. The second argument is optional -- when omitted, the firewall reuses the rule's own `keyExtractor` against this request, so the handler doesn't need to repeat the IP/header/etc. extraction:
 
 ```php
 use Flowd\Phirewall\Context\RequestContext;
@@ -242,10 +242,10 @@ class LoginController
         $password = $request->getParsedBody()['password'] ?? '';
 
         if (!$this->auth->verify($username, $password)) {
-            // Signal the failure to fail2ban
+            // Signal the failure -- the firewall extracts the key from
+            // the rule's own keyExtractor against this request.
             $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-            $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-            $context?->recordFailure('login-failures', $ip);
+            $context?->recordFailure('login-failures');
 
             return new Response(401, [], 'Invalid credentials');
         }
@@ -255,12 +255,19 @@ class LoginController
 }
 ```
 
+Pass an explicit second argument only when the handler knows a discriminator the firewall cannot derive from the request alone (e.g. a user id looked up in a session store):
+
+```php
+$context?->recordFailure('login-failures', $userIdFromSession);
+```
+
 | Method | Description |
 |--------|-------------|
-| `$context->recordFailure(string $ruleName, string $key)` | Record a failure signal. `$ruleName` must match a configured fail2ban rule name. `$key` is the discriminator (e.g., IP address). |
+| `$context->recordFailure(string $ruleName, ?string $key = null)` | Record a fail2ban failure signal. `$ruleName` must match a configured fail2ban rule. When `$key` is `null` the firewall derives it from the rule's `keyExtractor`. |
+| `$context->recordHit(string $ruleName, ?string $key = null)` | Counterpart for allow2ban rules -- same shape, routed through the allow2ban evaluator. See [Request Context](/advanced/request-context#recording-hits-for-allow2ban). |
 | `$context->getResult()` | Returns the `FirewallResult` from the pre-handler evaluation |
-| `$context->hasRecordedSignals()` | Whether any failure signals have been recorded |
-| `$context->getRecordedFailures()` | Returns all recorded `RecordedFailure` objects |
+| `$context->hasRecordedSignals()` | Whether any signals have been recorded |
+| `$context->getRecordedSignals()` | Returns all recorded `RecordedSignal` objects |
 
 ::: tip
 Use the null-safe operator (`$context?->recordFailure(...)`) so your handler works safely both with and without the middleware in the stack -- useful in unit tests where the middleware may not be present.

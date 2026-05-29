@@ -98,7 +98,7 @@ For each fail2ban rule:
 1. Checks if the key is already banned -- if so, returns a blocked result immediately
 2. If the filter matches, increments the failure counter and bans if the threshold is reached
 
-Both the pre-handler path (during `decide()`) and the post-handler path (via `processRecordedFailure()`) use the same `count >= threshold` comparison: the Nth matching request triggers the ban and is itself blocked. This matches rack-attack's `maxretry` semantics and is consistent with Allow2Ban.
+Both the pre-handler path (during `decide()`) and the post-handler path (via `processRecordedSignal()`) use the same `count >= threshold` comparison: the Nth matching request triggers the ban and is itself blocked. This matches rack-attack's `maxretry` semantics and is consistent with Allow2Ban.
 
 See [Request Context](/advanced/request-context) for post-handler failure signaling.
 
