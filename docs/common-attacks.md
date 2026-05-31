@@ -10,9 +10,41 @@ Ready-to-use Phirewall configurations for defending against common web applicati
 
 Protect login endpoints with layered rate limiting and fail2ban.
 
-### Fail2Ban on Login Failures
+### Post-Handler Failure Signaling (recommended)
 
-Ban IPs after repeated failed login attempts. The `filter` predicate determines what counts as a failure:
+The accurate way to ban on *real* failed logins is to record the failure **after** your handler has verified the credentials, using [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext). The fail2ban rule's filter never matches on its own (`fn() => false`); your handler decides what counts as a failure and records it, and the middleware processes the recorded signal once the handler returns. This is the pattern shown in [`examples/02-brute-force-protection.php`](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php).
+
+```php
+use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Context\RequestContext;
+use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Store\RedisCache;
+use Psr\Http\Message\ServerRequestInterface;
+
+$config = new Config(new RedisCache($redis));
+
+// Ban after 3 verified failures in 5 minutes for 1 hour.
+// The filter never matches — failures are signaled by the handler.
+$config->fail2ban->add('login-failures',
+    threshold: 3, period: 300, ban: 3600,
+    filter: fn(ServerRequestInterface $req): bool => false,
+    key: KeyExtractors::ip(),
+);
+
+// In your login handler, AFTER checking credentials:
+if (!$this->authenticate($username, $password)) {
+    $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
+    // As of 0.5.0 the key argument is optional — when omitted, the rule's own
+    // key extractor (here KeyExtractors::ip()) resolves the discriminator.
+    $context?->recordFailure('login-failures');
+}
+```
+
+Only genuine failures are counted, so a user who logs in correctly on the first try is never one attempt closer to a ban.
+
+### Fail2Ban on a Request Marker
+
+If you cannot integrate `RequestContext` (for example, the auth check lives in a separate service), a fail2ban filter can count a marker header instead. The filter inspects the **incoming request**, so the marker must be set by a **trusted middleware that runs before Phirewall** — never by the login handler, which runs *after* the firewall and can only set *response* headers that the pre-handler filter will never see:
 
 ```php
 use Flowd\Phirewall\Config;
@@ -22,7 +54,7 @@ use Psr\Http\Message\ServerRequestInterface;
 
 $config = new Config(new RedisCache($redis));
 
-// Ban after 5 failed logins in 5 minutes for 1 hour
+// Ban after 5 marked failures in 5 minutes for 1 hour.
 $config->fail2ban->add('login-brute-force',
     threshold: 5,
     period: 300,
@@ -35,29 +67,11 @@ $config->fail2ban->add('login-brute-force',
 );
 ```
 
-Your login handler sets the `X-Login-Failed` header on failed attempts before the response is returned.
+The `X-Login-Failed` **request** header must be set by a trusted upstream component **before** Phirewall evaluates the request — not by the login handler, which runs *after* the firewall and can only set response headers the pre-handler filter never sees.
 
-### Post-Handler Failure Signaling
-
-For more precise control, use [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext) to signal failures only after verifying credentials:
-
-```php
-use Flowd\Phirewall\Context\RequestContext;
-
-$config->fail2ban->add('login-failures',
-    threshold: 3, period: 300, ban: 3600,
-    filter: fn($req): bool => false, // Never counts automatically
-    key: KeyExtractors::ip(),
-);
-
-// In your login handler:
-if (!$this->authenticate($username, $password)) {
-    $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-    // No second argument needed -- the firewall extracts the key from the
-    // rule's own keyExtractor against this request.
-    $context?->recordFailure('login-failures');
-}
-```
+::: warning
+Trust the `X-Login-Failed` marker only if an upstream component your application controls sets it — and strip any inbound copy of that header at the edge, so a client cannot forge it. When in doubt, prefer the post-handler `RequestContext` approach above.
+:::
 
 ### Login Endpoint Throttle
 
@@ -239,7 +253,7 @@ Block known attack tools (sqlmap, nikto, nuclei, etc.) with a single call:
 $config->blocklists->knownScanners();
 ```
 
-The default list covers ~25 tools. Extend or replace it:
+The default list covers 24 tools. Extend or replace it:
 
 ```php
 use Flowd\Phirewall\Matchers\KnownScannerMatcher;
@@ -379,6 +393,10 @@ $config->throttles->add('api-key',
 );
 ```
 
+::: warning Header keys are client-controlled
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold — a trivial bypass. Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')` — the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+:::
+
 ### Expensive Endpoint Protection
 
 Apply stricter limits to resource-intensive endpoints:
@@ -515,7 +533,7 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 
 2. **Safelist your health checks.** Internal monitoring endpoints should bypass all firewall rules to avoid false alerts.
 
-3. **Use `clientIp()` behind proxies.** If your application runs behind a load balancer or CDN, configure a `TrustedProxyResolver` so rate limits and bans apply to the real client IP.
+3. **Use `clientIp()` behind proxies.** If your application runs behind a load balancer or CDN, configure a `TrustedProxyResolver` so rate limits and bans apply to the real client IP — raw `KeyExtractors::ip()` would collapse every client onto the proxy's address. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
 
 4. **Start with logging, then enforce.** Use [Track rules](/advanced/track-notifications) to observe traffic patterns before enabling blocking rules.
 

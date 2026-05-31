@@ -96,8 +96,16 @@ $config->throttles->add('api', limit: 100, period: 60,
 );
 ```
 
+A few 0.5.0 specifics:
+
+- **`allowedHeaders` defaults to `['X-Forwarded-For']`** (a single header). If your stack emits the RFC 7239 `Forwarded` header, pass it explicitly: `new TrustedProxyResolver([...], ['Forwarded'])`.
+- **Only the last `X-Forwarded-For` / `Forwarded` instance is trusted** — a duplicate header line prepended by a client is ignored.
+- **IPv6 is canonicalized** — IPv4-mapped peers (`::ffff:1.2.3.4`) match IPv4 rules, and alternate IPv6 spellings are treated as one identity by `ip()` / CIDR list matching (rate-limit and ban keys use the spelling the resolver returns).
+
+See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies) for the full behavior.
+
 ::: danger
-Never trust `X-Forwarded-For` without configuring trusted proxies. An attacker can spoof this header to bypass rate limiting.
+`KeyExtractors::ip()` reads `REMOTE_ADDR`, which behind a CDN or load balancer is the *proxy's* address — so every client collapses onto one key. Always install a client-IP resolver in that case. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting.
 :::
 
 ### What happens when the cache backend is unavailable?
@@ -193,7 +201,7 @@ $config->fail2ban('login', 5, 300, 3600, filter: ..., key: ...);
 // New (section API)
 $config->safelists->add('health', fn($request) => ...);
 $config->throttles->add('ip', 100, 60, fn($request) => ...);
-$config->fail2ban->add('login', threshold: 5, period: 300, banSeconds: 3600, filter: ..., key: ...);
+$config->fail2ban->add('login', threshold: 5, period: 300, ban: 3600, filter: ..., key: ...);
 ```
 
 See the [Getting Started](/getting-started) guide for the full section API reference.

@@ -8,7 +8,7 @@ Phirewall provides three specialized matchers for bot and scanner detection: **K
 
 ## Known Scanner Blocking
 
-The `knownScanners()` method blocks requests whose User-Agent matches known attack tools and vulnerability scanners. It ships with a curated default list covering 25+ well-known tools.
+The `knownScanners()` method blocks requests whose User-Agent matches known attack tools and vulnerability scanners. It ships with a curated default list covering 24 well-known tools.
 
 ### Quick Setup
 

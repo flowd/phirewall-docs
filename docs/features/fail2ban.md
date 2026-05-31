@@ -87,6 +87,10 @@ $config->fail2ban->add('login-brute-force',
 Counting every POST to `/login` is simpler and works well for most applications. Legitimate users who log in successfully within the threshold are unaffected. Set a generous enough threshold (5-10) so users who mistype their password are not banned.
 :::
 
+::: tip Skip the boilerplate with a preset
+The [`loginProtection()` preset](/advanced/presets) bundles a login throttle and a brute-force fail2ban rule, ready to compose with your own `Config`. See [Presets](/advanced/presets).
+:::
+
 ### Credential Stuffing Defense
 
 Credential stuffing uses stolen username/password lists from data breaches. Defend against it by combining IP-based banning with user-based throttling:
@@ -263,11 +267,11 @@ $context?->recordFailure('login-failures', $userIdFromSession);
 
 | Method | Description |
 |--------|-------------|
-| `$context->recordFailure(string $ruleName, ?string $key = null)` | Record a fail2ban failure signal. `$ruleName` must match a configured fail2ban rule. When `$key` is `null` the firewall derives it from the rule's `keyExtractor`. |
+| `$context->recordFailure(string $ruleName, ?string $key = null)` | Record a fail2ban failure signal. `$ruleName` must match a configured fail2ban rule name. As of 0.5.0 `$key` is **optional** — when omitted, the rule's own key extractor resolves the discriminator from the current request, so the handler no longer needs to know whether the rule keys on IP, header, or anything else. |
 | `$context->recordHit(string $ruleName, ?string $key = null)` | Counterpart for allow2ban rules -- same shape, routed through the allow2ban evaluator. See [Request Context](/advanced/request-context#recording-hits-for-allow2ban). |
 | `$context->getResult()` | Returns the `FirewallResult` from the pre-handler evaluation |
 | `$context->hasRecordedSignals()` | Whether any signals have been recorded |
-| `$context->getRecordedSignals()` | Returns all recorded `RecordedSignal` objects |
+| `$context->getRecordedSignals()` | Returns all recorded `RecordedSignal` objects (renamed from `getRecordedFailures()` / `RecordedFailure` in 0.5.0) |
 
 ::: tip
 Use the null-safe operator (`$context?->recordFailure(...)`) so your handler works safely both with and without the middleware in the stack -- useful in unit tests where the middleware may not be present.
@@ -367,6 +371,10 @@ $config->allow2ban->add(
     key: KeyExtractors::hashedHeader('X-Api-Key'),
 );
 ```
+
+::: warning Header keys are client-controlled
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold — a trivial bypass. Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')` — the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+:::
 
 ### Unauthenticated Endpoint Abuse
 

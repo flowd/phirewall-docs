@@ -106,7 +106,7 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `REQUEST_URI` | Full request URI including query string |
 | `REQUEST_METHOD` | HTTP method (GET, POST, etc.) |
 | `QUERY_STRING` | Raw query string |
-| `REQUEST_FILENAME` | Request path without query string |
+| `REQUEST_FILENAME` | Basename (final path segment), without query string |
 | `REQUEST_HEADERS` | All request header values |
 | `REQUEST_HEADERS_NAMES` | Names of all request headers |
 | `REQUEST_COOKIES` | All cookie values |
@@ -342,7 +342,7 @@ insert into
 ```
 
 ::: warning
-`@pmFromFile` includes path traversal protection. Paths containing `..` are rejected to prevent loading files outside the rules directory.
+`@pmFromFile` paths are resolved relative to the rule file's directory, and `..` traversal segments are rejected. Treat SecRule files as trusted operator configuration — never build rule text from untrusted input, since the operand selects which file is read.
 :::
 
 ## Architecture
@@ -373,7 +373,7 @@ Each CRS variable maps to a `VariableCollectorInterface` implementation:
 | `REQUEST_URI` | `RequestUriCollector` | Full URI including query string |
 | `REQUEST_METHOD` | `RequestMethodCollector` | HTTP method |
 | `QUERY_STRING` | `QueryStringCollector` | Raw query string |
-| `REQUEST_FILENAME` | `RequestFilenameCollector` | URI path without query string |
+| `REQUEST_FILENAME` | `RequestFilenameCollector` | Basename (final path segment), without query string |
 | `REQUEST_HEADERS` | `RequestHeadersCollector` | All header values |
 | `REQUEST_HEADERS_NAMES` | `RequestHeadersNamesCollector` | Header names |
 | `REQUEST_COOKIES` | `RequestCookiesCollector` | All cookie values |

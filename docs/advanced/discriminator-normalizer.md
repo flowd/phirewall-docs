@@ -18,9 +18,9 @@ When a request is evaluated, the key goes through two normalization stages:
 Without normalization, attackers can bypass rate limiting by manipulating the key used for counting:
 
 ```
-phirewall:throttle:api:<hash of "192.168.1.100">   ← Real IP
-phirewall:throttle:api:<hash of "192.168.1.100 ">  ← Trailing space
-phirewall:throttle:api:<hash of " 192.168.1.100">  ← Leading space
+phirewall.throttle.api.<hash of "192.168.1.100">   ← Real IP
+phirewall.throttle.api.<hash of "192.168.1.100 ">  ← Trailing space
+phirewall.throttle.api.<hash of " 192.168.1.100">  ← Leading space
 ```
 
 Each of these would produce a different SHA-256 hash and create a separate counter, effectively multiplying the attacker's rate limit. The discriminator normalizer prevents this by transforming keys before hashing.
@@ -53,7 +53,7 @@ The normalizer is a `Closure` that receives a string and returns a string. It is
 Phirewall's `CacheKeyGenerator` produces cache keys in this format:
 
 ```
-{prefix}:{type}:{normalized_rule_name}:{hashed_key}
+{prefix}.{type}.{normalized_rule_name}.{hashed_key}
 ```
 
 ### Rule Name Normalization
@@ -61,7 +61,7 @@ Phirewall's `CacheKeyGenerator` produces cache keys in this format:
 Rule names are sanitized for safe use in cache keys:
 
 1. **Trimmed** -- leading and trailing whitespace removed
-2. **Sanitized** -- only `A-Za-z0-9._:-` characters are kept; all others replaced with `_`
+2. **Sanitized** -- only `A-Za-z0-9._-` characters are kept; all others replaced with `_`
 3. **Deduplicated** -- consecutive underscores collapsed to one
 4. **Truncated** -- names longer than 120 characters are shortened with a SHA-1 suffix
 5. **Empty-safe** -- empty strings are replaced with `empty`
@@ -171,7 +171,7 @@ Different cache backends have different key constraints:
 | File-based | OS path limit (~260 chars) | `/`, `\`, `NUL` |
 | Memcached | 250 bytes | Spaces, control characters |
 
-SHA-256 hashing ensures user keys are always exactly 64 hex characters, safe across all backends.
+SHA-256 hashing ensures user keys are always exactly 64 hex characters, safe across all backends. The Memcached and File-based rows are general PSR-16 examples — they are not bundled backends (Phirewall ships `InMemoryCache`, `ApcuCache`, `RedisCache`, and `PdoCache`).
 
 ### Security
 
@@ -199,10 +199,10 @@ Use `$config->setKeyPrefix()` to change the prefix and avoid collisions when sha
 
 ```php
 $config->setKeyPrefix('myapp');
-// Keys become: myapp:throttle:..., myapp:fail2ban:..., etc.
+// Keys become: myapp.throttle..., myapp.fail2ban..., etc.
 ```
 
-The prefix itself is validated -- it cannot be empty.
+The prefix is validated: it is trimmed (whitespace and a trailing `:` stripped), must be non-empty, and may not contain a PSR-16 reserved character (`{}()/\@:`) or any control/whitespace character — otherwise `setKeyPrefix()` throws `InvalidArgumentException` at the call site.
 
 ## Best Practices
 

@@ -714,6 +714,10 @@ $maskedIp = preg_replace('/\.\d+$/', '.xxx', $event->key);
 $this->logger->info('Event', ['key' => $maskedIp]);
 ```
 
+::: warning Keys can be secrets
+The discriminator in event payloads (`$event->key`) and in the ban-registry cache entry is the **raw** value the rule keyed on. When a rule keys on a credential-bearing header, that is a live secret — never log it verbatim and never expose the ban registry. Key such rules with `KeyExtractors::hashedHeader()` so only a sha256 fingerprint is stored and emitted.
+:::
+
 ## Related Pages
 
 - [Track & Notifications](/advanced/track-notifications) -- track rules, thresholds, and notification patterns

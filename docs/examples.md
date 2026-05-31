@@ -8,7 +8,7 @@ Complete, copy-pasteable configurations for common scenarios. Each example is se
 
 ## Running the Built-in Examples
 
-The Phirewall repository includes 27 runnable examples:
+The Phirewall repository includes 31 runnable examples:
 
 ```bash
 git clone https://github.com/flowd/phirewall
@@ -46,6 +46,10 @@ php examples/01-basic-setup.php
 | 25 | [track-threshold](https://github.com/flowd/phirewall/blob/main/examples/25-track-threshold.php) | Track with threshold for alerting |
 | 26 | [psr17-factories](https://github.com/flowd/phirewall/blob/main/examples/26-psr17-factories.php) | PSR-17 response factory integration |
 | 27 | [request-context](https://github.com/flowd/phirewall/blob/main/examples/27-request-context.php) | Post-handler fail2ban signaling |
+| 28 | [portable-config-signing](https://github.com/flowd/phirewall/blob/main/examples/28-portable-config-signing.php) | Signed PortableConfig transport (HMAC-SHA256) |
+| 29 | [portable-config](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) | PortableConfig as a first-class transport with DB hot-reload |
+| 30 | [config-composition](https://github.com/flowd/phirewall/blob/main/examples/30-config-composition.php) | Layering configs (vendor → environment → tenant → deployment) |
+| 31 | [presets](https://github.com/flowd/phirewall/blob/main/examples/31-presets.php) | Ready-to-use rule presets and the update-check seam |
 
 ---
 
@@ -179,7 +183,11 @@ echo 'Status: ' . $response->getStatusCode() . "\n";
 
 ### Symfony
 
-Requires `symfony/psr-http-message-bridge` and `nyholm/psr7`. Phirewall runs as a PSR-15 middleware wrapped by Symfony's PSR bridge.
+Requires `symfony/psr-http-message-bridge` and `nyholm/psr7`. Phirewall runs as a PSR-15 middleware wrapped by Symfony's PSR bridge — the bridge factories (`HttpMessageFactoryInterface`, `HttpFoundationFactoryInterface`) and the `nyholm/psr7` PSR-17 factory then autowire into the listener below.
+
+::: warning
+This bridge runs Phirewall with a pass-through handler, so the `RequestContext` attribute it attaches for app-recorded fail2ban/allow2ban signals lives on the throwaway PSR request and is not visible to your Symfony controllers. Use the pre-handler rule filters for blocking; post-handler `recordFailure()`/`recordHit()` from a controller is not propagated by this basic bridge.
+:::
 
 **`src/Factory/PhirewallFactory.php`**
 
@@ -220,8 +228,11 @@ class PhirewallFactory
         $config->setFailOpen(true);
 
         // ── Trusted Proxies ──────────────────────────────────────
-        if ($this->trustedProxies !== []) {
-            $proxyResolver = new TrustedProxyResolver($this->trustedProxies);
+        // Drop empty entries so an unset/blank env var disables the
+        // resolver instead of registering an empty proxy list.
+        $trustedProxies = array_values(array_filter($this->trustedProxies));
+        if ($trustedProxies !== []) {
+            $proxyResolver = new TrustedProxyResolver($trustedProxies);
             $config->setIpResolver(
                 KeyExtractors::clientIp($proxyResolver)
             );
@@ -294,75 +305,87 @@ class PhirewallFactory
 services:
     App\Factory\PhirewallFactory:
         arguments:
-            $trustedProxies: ['10.0.0.0/8', '172.16.0.0/12']
+            $trustedProxies: '%env(csv:PHIREWALL_TRUSTED_PROXIES)%'
 
     Flowd\Phirewall\Middleware:
         factory: ['@App\Factory\PhirewallFactory', 'create']
 ```
 
-**`src/EventSubscriber/PhirewallSubscriber.php`**
+Set the proxy CIDRs in your environment (e.g. `.env`): `PHIREWALL_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12`. The listener below auto-registers via `#[AsEventListener]` + autoconfigure — no manual `tags:` entry needed.
+
+**`src/EventListener/PhirewallListener.php`**
+
+A two-phase listener: it runs Phirewall on `kernel.request` (blocking early when a rule fires) and re-attaches the `X-RateLimit-*` headers Phirewall adds on the allowed path during `kernel.response`. A single-phase subscriber that only acts when the status is non-200 would silently drop those headers.
 
 ```php
 <?php
 
 declare(strict_types=1);
 
-namespace App\EventSubscriber;
+namespace App\EventListener;
 
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
-use Nyholm\Psr7\Factory\Psr17Factory;
-use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
-use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
-use Symfony\Component\EventDispatcher\EventSubscriberInterface;
+use Psr\Http\Message\ResponseFactoryInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Symfony\Bridge\PsrHttpMessage\HttpFoundationFactoryInterface;
+use Symfony\Bridge\PsrHttpMessage\HttpMessageFactoryInterface;
+use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
+use Symfony\Component\HttpKernel\Event\ResponseEvent;
 use Symfony\Component\HttpKernel\KernelEvents;
 
-class PhirewallSubscriber implements EventSubscriberInterface
+final class PhirewallListener
 {
+    private const HEADERS_ATTRIBUTE = '_phirewall_headers';
+
     public function __construct(
         private readonly PhirewallMiddleware $middleware,
+        private readonly HttpMessageFactoryInterface $psrHttpFactory,
+        private readonly HttpFoundationFactoryInterface $httpFoundationFactory,
+        private readonly ResponseFactoryInterface $responseFactory,
     ) {}
 
-    public static function getSubscribedEvents(): array
-    {
-        // Run as early as possible (high priority)
-        return [KernelEvents::REQUEST => ['onKernelRequest', 256]];
-    }
-
+    #[AsEventListener(event: KernelEvents::REQUEST, priority: 256)]
     public function onKernelRequest(RequestEvent $event): void
     {
         if (!$event->isMainRequest()) {
             return;
         }
-
-        $psr17 = new Psr17Factory();
-        $psrFactory = new PsrHttpFactory($psr17, $psr17, $psr17, $psr17);
-        $httpFoundationFactory = new HttpFoundationFactory();
-
-        // Convert Symfony request to PSR-7
-        $psrRequest = $psrFactory->createRequest($event->getRequest());
-
-        // Run Phirewall as a pass-through handler
-        $psrResponse = $this->middleware->process(
-            $psrRequest,
-            new class ($psr17) implements \Psr\Http\Server\RequestHandlerInterface {
-                public function __construct(private readonly Psr17Factory $factory) {}
-
-                public function handle(
-                    \Psr\Http\Message\ServerRequestInterface $request,
-                ): \Psr\Http\Message\ResponseInterface {
-                    // Return 200 -- Symfony continues processing
-                    return $this->factory->createResponse(200);
-                }
+        $psrRequest = $this->psrHttpFactory->createRequest($event->getRequest());
+        $psrResponse = $this->middleware->process($psrRequest, $this->passThroughHandler());
+        if ($psrResponse->getStatusCode() === 200) {
+            if ($psrResponse->getHeaders() !== []) {
+                $event->getRequest()->attributes->set(self::HEADERS_ATTRIBUTE, $psrResponse->getHeaders());
             }
-        );
-
-        // If Phirewall blocked the request, short-circuit
-        if ($psrResponse->getStatusCode() !== 200) {
-            $event->setResponse(
-                $httpFoundationFactory->createResponse($psrResponse)
-            );
+            return;
         }
+        $event->setResponse($this->httpFoundationFactory->createResponse($psrResponse));
+    }
+
+    #[AsEventListener(event: KernelEvents::RESPONSE)]
+    public function onKernelResponse(ResponseEvent $event): void
+    {
+        if (!$event->isMainRequest()) {
+            return;
+        }
+        /** @var array<string, list<string>> $headers */
+        $headers = $event->getRequest()->attributes->get(self::HEADERS_ATTRIBUTE, []);
+        foreach ($headers as $name => $values) {
+            $event->getResponse()->headers->set($name, $values);
+        }
+    }
+
+    private function passThroughHandler(): RequestHandlerInterface
+    {
+        return new class ($this->responseFactory) implements RequestHandlerInterface {
+            public function __construct(private readonly ResponseFactoryInterface $responseFactory) {}
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return $this->responseFactory->createResponse(200);
+            }
+        };
     }
 }
 ```
@@ -371,7 +394,15 @@ class PhirewallSubscriber implements EventSubscriberInterface
 
 ### Laravel
 
-Requires `nyholm/psr7`. Register the service provider and add the middleware to your HTTP kernel.
+`Flowd\Phirewall\Middleware` is a PSR-15 middleware (`process(...)`), **not** a Laravel middleware (`handle($request, $next)`) — registering the class directly throws. A thin bridge middleware adapts it. Install the bridge:
+
+```bash
+composer require symfony/psr-http-message-bridge nyholm/psr7
+```
+
+::: warning
+This bridge runs Phirewall with a probe handler, so the `RequestContext` attribute it attaches for app-recorded fail2ban/allow2ban signals lives on the throwaway PSR request and is not visible to your Laravel controllers. Use the pre-handler rule filters for blocking; post-handler `recordFailure()`/`recordHit()` from a controller is not propagated by this basic bridge.
+:::
 
 **`app/Providers/PhirewallServiceProvider.php`**
 
@@ -391,11 +422,21 @@ use Flowd\Phirewall\Store\ApcuCache;
 use Illuminate\Support\ServiceProvider;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Message\ServerRequestInterface;
+use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
 
 class PhirewallServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        // PSR-7/PSR-17 bridge factories used by the Phirewall middleware.
+        // HttpFoundationFactory has a no-arg constructor, so Laravel
+        // autowires it without an explicit binding.
+        $this->app->singleton(Psr17Factory::class);
+        $this->app->singleton(PsrHttpFactory::class, fn ($app) => new PsrHttpFactory(
+            $app->make(Psr17Factory::class), $app->make(Psr17Factory::class),
+            $app->make(Psr17Factory::class), $app->make(Psr17Factory::class),
+        ));
+
         $this->app->singleton(PhirewallMiddleware::class, function () {
             // ── Storage ──────────────────────────────────────────
             // ApcuCache requires ext-apcu (zero config, single-server)
@@ -489,24 +530,94 @@ class PhirewallServiceProvider extends ServiceProvider
 }
 ```
 
-**`bootstrap/app.php`** (Laravel 11+)
+**`app/Http/Middleware/Phirewall.php`**
+
+The bridge adapts the PSR-15 engine to Laravel's middleware contract. It uses a probe handler so the real Laravel response is never round-tripped through PSR-7 — `StreamedResponse`/`BinaryFileResponse` and other special responses are preserved. On the allowed path it copies Phirewall's `X-RateLimit-*` headers onto the real response.
 
 ```php
-use Flowd\Phirewall\Middleware as PhirewallMiddleware;
+<?php
+
+declare(strict_types=1);
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Flowd\Phirewall\Middleware as PhirewallEngine;
+use Illuminate\Http\Request;
+use Nyholm\Psr7\Factory\Psr17Factory;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
+use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
+use Symfony\Component\HttpFoundation\Response;
+
+final readonly class Phirewall
+{
+    public function __construct(
+        private PhirewallEngine $firewall,
+        private PsrHttpFactory $psrHttpFactory,
+        private HttpFoundationFactory $httpFoundationFactory,
+        private Psr17Factory $psr17,
+    ) {}
+
+    public function handle(Request $request, Closure $next): Response
+    {
+        $psrRequest = $this->psrHttpFactory->createRequest($request);
+        $probe = new class($this->psr17) implements RequestHandlerInterface {
+            private bool $invoked = false;
+            public function __construct(private readonly Psr17Factory $responseFactory) {}
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                $this->invoked = true;
+                return $this->responseFactory->createResponse();
+            }
+            public function wasInvoked(): bool { return $this->invoked; }
+        };
+        $psrResponse = $this->firewall->process($psrRequest, $probe);
+        if (! $probe->wasInvoked()) {
+            return $this->httpFoundationFactory->createResponse($psrResponse);
+        }
+        $response = $next($request);
+        foreach ($psrResponse->getHeaders() as $name => $values) {
+            $response->headers->set($name, $values);
+        }
+        return $response;
+    }
+}
+```
+
+Register the service provider in `bootstrap/providers.php` (Laravel 11+) or the `providers` array in `config/app.php` (Laravel 10 and earlier).
+
+**`bootstrap/app.php`** (Laravel 11/12)
+
+```php
+<?php
+
+use App\Http\Middleware\Phirewall;
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
 
 return Application::configure(basePath: dirname(__DIR__))
-    ->withMiddleware(function (Middleware $middleware) {
-        // Run Phirewall as the outermost middleware
-        $middleware->prepend(PhirewallMiddleware::class);
+    ->withRouting(
+        web: __DIR__.'/../routes/web.php',
+        commands: __DIR__.'/../routes/console.php',
+        health: '/up',
+    )
+    ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->prepend(Phirewall::class);
     })
-    ->create();
+    ->withExceptions(function (Exceptions $exceptions): void {
+        //
+    })->create();
 ```
 
 **`app/Http/Kernel.php`** (Laravel 10 and earlier)
 
 ```php
 protected $middleware = [
-    \Flowd\Phirewall\Middleware::class, // outermost -- before everything
+    \App\Http\Middleware\Phirewall::class, // outermost -- before everything
     // ... other global middleware
 ];
 ```
@@ -1527,7 +1638,7 @@ $dispatcher = new class ($logger) implements EventDispatcherInterface {
             $event instanceof BlocklistMatched => $this->logger->warning('Request blocklisted', $context),
             $event instanceof ThrottleExceeded => $this->logger->notice('Rate limited', $context),
             $event instanceof SafelistMatched => $this->logger->debug('Safelisted', $context),
-            $event instanceof FirewallError => $this->logger->error('Firewall error', ['error' => $event->throwable->getMessage()]),
+            $event instanceof FirewallError => $this->logger->error('Firewall error', ['error' => $event->exception->getMessage()]),
             default => null,
         };
 

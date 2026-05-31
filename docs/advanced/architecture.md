@@ -136,7 +136,7 @@ The order is optimized so cheap checks run before expensive ones, and passive tr
 
 ## Performance
 
-The evaluator pipeline adds no measurable overhead compared to the previous monolithic implementation. Each evaluator is a lightweight, stateless object (except `Fail2BanEvaluator`, which is retained for post-handler failure processing). The pipeline iterates a fixed-size array with early exit on the first decisive result.
+The evaluator pipeline adds no measurable overhead compared to the previous monolithic implementation. Each evaluator is a lightweight, stateless object (except `Fail2BanEvaluator` and `Allow2BanEvaluator`, which are retained for post-handler failure processing). The pipeline iterates a fixed-size array with early exit on the first decisive result.
 
 Performance timing for every `decide()` call is captured in the `PerformanceMeasured` event, which includes the `DecisionPath` and `durationMicros`. See [Observability](/advanced/observability#performancemeasured) for details.
 

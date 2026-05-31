@@ -14,6 +14,10 @@ Three throttle strategies are available:
 | **Sliding window** | `sliding()` | Smooth rate limits without double-burst |
 | **Multi-window** | `multi()` | Combined burst + sustained limits |
 
+::: tip
+For a ready-made per-client API rate limit (burst + sustained, scoped to `/api`), the [`apiRateLimiting()` preset](/advanced/presets) ships the rules below pre-configured.
+:::
+
 ## Fixed Window Throttle
 
 The default strategy. Time is divided into fixed windows (e.g., 60-second intervals aligned to clock time) and each unique key gets a counter that resets at the end of the window.
@@ -217,7 +221,7 @@ Phirewall ships with common key extractors for typical rate limiting scenarios:
 | `KeyExtractors::ip()` | Client IP from `REMOTE_ADDR` | `?string` |
 | `KeyExtractors::clientIp($resolver)` | Client IP via trusted proxy resolver | `?string` |
 | `KeyExtractors::header('X-User-Id')` | Raw value of a specific header | `?string` |
-| `KeyExtractors::hashedHeader('X-Api-Key')` | sha256 fingerprint of a header value | `?string` |
+| `KeyExtractors::hashedHeader('X-Api-Key')` | sha256 fingerprint of a header value; preferred for credential-bearing headers (raw value never stored/emitted) | `?string` |
 | `KeyExtractors::method()` | HTTP method (uppercase) | `?string` |
 | `KeyExtractors::path()` | Request path (always returns a value, never skips) | `string` |
 | `KeyExtractors::userAgent()` | User-Agent header value | `?string` |
@@ -320,6 +324,10 @@ $config->throttles->add('api-anon',
 Your application's authentication middleware should set headers like `X-User-Id` and `X-Plan` on the request before it reaches the Phirewall middleware. This allows clean separation of concerns.
 :::
 
+::: warning Header keys are client-controlled
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold — a trivial bypass. Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')` — the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+:::
+
 ## Rate Limit Headers
 
 Enable standard `X-RateLimit-*` headers on all responses:
@@ -404,8 +412,10 @@ You can also set a global IP resolver so all IP-aware matchers use it automatica
 $config->setIpResolver(KeyExtractors::clientIp($resolver));
 ```
 
+The resolver's `allowedHeaders` argument now defaults to `['X-Forwarded-For']` (a single header) — pass `['Forwarded']` explicitly if your stack emits the RFC 7239 header. Only the last forwarded-header instance is parsed, and IPv6 addresses are canonicalized (IPv4-mapped peers match IPv4 rules). See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies) for the full 0.5.0 behavior.
+
 ::: danger
-Never trust `X-Forwarded-For` without configuring trusted proxies. An attacker can spoof this header to bypass rate limiting entirely.
+`KeyExtractors::ip()` keys on raw `REMOTE_ADDR` — behind a load balancer or CDN that is the proxy IP, so every client shares one throttle key and your limits stop working. Configure a `TrustedProxyResolver` so rate limits apply to the real client. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting entirely.
 :::
 
 ## Events

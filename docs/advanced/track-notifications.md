@@ -355,7 +355,7 @@ The returned array is organized by category, each with a total and a breakdown b
 ]
 ```
 
-Categories tracked: `safelisted`, `blocklisted`, `throttle_exceeded`, `fail2ban_banned`, `track_hit`, `passed`, `fail2ban_blocked`.
+Categories tracked: `safelisted`, `blocklisted`, `throttle_exceeded`, `fail2ban_banned`, `allow2ban_banned`, `track_hit`, `passed`, `fail2ban_blocked`.
 
 ### Exposing as a Prometheus-Style Metrics Endpoint
 

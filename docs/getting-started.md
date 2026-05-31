@@ -331,67 +331,96 @@ class PhirewallFactory
     }
 }
 
-// 3. Register in config/services.yaml:
+// 3. Register the middleware factory in config/services.yaml:
 //    services:
 //        Flowd\Phirewall\Middleware:
 //            factory: ['@App\Factory\PhirewallFactory', 'create']
+//    The listener below auto-registers via #[AsEventListener] +
+//    autoconfigure; the bridge factory interfaces autowire from the
+//    symfony/psr-http-message-bridge + nyholm/psr7 packages.
 //
-// 4. Create src/EventSubscriber/PhirewallSubscriber.php:
+// 4. Create src/EventListener/PhirewallListener.php
+//    A two-phase listener: it blocks on kernel.request, and re-attaches
+//    the X-RateLimit-* headers on kernel.response (a status-only
+//    subscriber would silently drop them on the allowed 200 path).
+//    NOTE: the bridge runs Phirewall with a pass-through handler, so the
+//    RequestContext attribute for app-recorded fail2ban/allow2ban signals
+//    is NOT visible to your controllers. Use pre-handler rule filters.
 
-namespace App\EventSubscriber;
+namespace App\EventListener;
 
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
-use Nyholm\Psr7\Factory\Psr17Factory;
-use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
-use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
-use Symfony\Component\EventDispatcher\EventSubscriberInterface;
+use Psr\Http\Message\ResponseFactoryInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Symfony\Bridge\PsrHttpMessage\HttpFoundationFactoryInterface;
+use Symfony\Bridge\PsrHttpMessage\HttpMessageFactoryInterface;
+use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
+use Symfony\Component\HttpKernel\Event\ResponseEvent;
 use Symfony\Component\HttpKernel\KernelEvents;
 
-class PhirewallSubscriber implements EventSubscriberInterface
+final class PhirewallListener
 {
+    private const HEADERS_ATTRIBUTE = '_phirewall_headers';
+
     public function __construct(
         private readonly PhirewallMiddleware $middleware,
+        private readonly HttpMessageFactoryInterface $psrHttpFactory,
+        private readonly HttpFoundationFactoryInterface $httpFoundationFactory,
+        private readonly ResponseFactoryInterface $responseFactory,
     ) {}
 
-    public static function getSubscribedEvents(): array
-    {
-        return [KernelEvents::REQUEST => ['onKernelRequest', 256]];
-    }
-
+    #[AsEventListener(event: KernelEvents::REQUEST, priority: 256)]
     public function onKernelRequest(RequestEvent $event): void
     {
         if (!$event->isMainRequest()) {
             return;
         }
-
-        $psr17 = new Psr17Factory();
-        $psrFactory = new PsrHttpFactory($psr17, $psr17, $psr17, $psr17);
-        $httpFoundationFactory = new HttpFoundationFactory();
-
-        $psrRequest  = $psrFactory->createRequest($event->getRequest());
-        $psrResponse = $this->middleware->process(
-            $psrRequest,
-            new class ($psr17) implements \Psr\Http\Server\RequestHandlerInterface {
-                public function __construct(private readonly Psr17Factory $responseFactory) {}
-                public function handle(
-                    \Psr\Http\Message\ServerRequestInterface $request,
-                ): \Psr\Http\Message\ResponseInterface {
-                    return $this->responseFactory->createResponse(200);
-                }
+        $psrRequest = $this->psrHttpFactory->createRequest($event->getRequest());
+        $psrResponse = $this->middleware->process($psrRequest, $this->passThroughHandler());
+        if ($psrResponse->getStatusCode() === 200) {
+            if ($psrResponse->getHeaders() !== []) {
+                $event->getRequest()->attributes->set(self::HEADERS_ATTRIBUTE, $psrResponse->getHeaders());
             }
-        );
-
-        if ($psrResponse->getStatusCode() !== 200) {
-            $event->setResponse(
-                $httpFoundationFactory->createResponse($psrResponse)
-            );
+            return;
         }
+        $event->setResponse($this->httpFoundationFactory->createResponse($psrResponse));
+    }
+
+    #[AsEventListener(event: KernelEvents::RESPONSE)]
+    public function onKernelResponse(ResponseEvent $event): void
+    {
+        if (!$event->isMainRequest()) {
+            return;
+        }
+        /** @var array<string, list<string>> $headers */
+        $headers = $event->getRequest()->attributes->get(self::HEADERS_ATTRIBUTE, []);
+        foreach ($headers as $name => $values) {
+            $event->getResponse()->headers->set($name, $values);
+        }
+    }
+
+    private function passThroughHandler(): RequestHandlerInterface
+    {
+        return new class ($this->responseFactory) implements RequestHandlerInterface {
+            public function __construct(private readonly ResponseFactoryInterface $responseFactory) {}
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return $this->responseFactory->createResponse(200);
+            }
+        };
     }
 }
 ```
 
 ```php [Laravel]
+// Flowd\Phirewall\Middleware is a PSR-15 middleware (process(...)), NOT a
+// Laravel middleware (handle($request, $next)) -- registering the class
+// directly throws. A thin bridge middleware (step 3) adapts it.
+// Install the bridge: composer require symfony/psr-http-message-bridge nyholm/psr7
+//
 // 1. Create app/Providers/PhirewallServiceProvider.php:
 
 namespace App\Providers;
@@ -403,11 +432,20 @@ use Flowd\Phirewall\Store\ApcuCache;
 use Illuminate\Support\ServiceProvider;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Message\ServerRequestInterface;
+use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
 
 class PhirewallServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        // PSR-7/PSR-17 bridge factories used by the bridge middleware.
+        // HttpFoundationFactory autowires (no-arg constructor).
+        $this->app->singleton(Psr17Factory::class);
+        $this->app->singleton(PsrHttpFactory::class, fn ($app) => new PsrHttpFactory(
+            $app->make(Psr17Factory::class), $app->make(Psr17Factory::class),
+            $app->make(Psr17Factory::class), $app->make(Psr17Factory::class),
+        ));
+
         $this->app->singleton(PhirewallMiddleware::class, function () {
             // ApcuCache requires ext-apcu (zero config, single-server)
             // For multi-server: use RedisCache with predis/predis
@@ -455,14 +493,74 @@ class PhirewallServiceProvider extends ServiceProvider
     }
 }
 
-// 2. Register in bootstrap/app.php (Laravel 11+):
-//    ->withMiddleware(function (Middleware $middleware) {
-//        $middleware->prepend(\Flowd\Phirewall\Middleware::class);
+// 2. Register the provider in bootstrap/providers.php (Laravel 11+)
+//    or the providers array in config/app.php (Laravel 10).
+//
+// 3. Create app/Http/Middleware/Phirewall.php -- the bridge.
+//    Uses a probe handler so the real Laravel response is never
+//    round-tripped through PSR-7 (preserves StreamedResponse /
+//    BinaryFileResponse) and copies Phirewall's X-RateLimit-* headers
+//    onto the allowed response.
+//    NOTE: the bridge runs Phirewall with a probe handler, so the
+//    RequestContext attribute for app-recorded fail2ban/allow2ban signals
+//    is NOT visible to your controllers. Use pre-handler rule filters.
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Flowd\Phirewall\Middleware as PhirewallEngine;
+use Illuminate\Http\Request;
+use Nyholm\Psr7\Factory\Psr17Factory;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
+use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
+use Symfony\Component\HttpFoundation\Response;
+
+final readonly class Phirewall
+{
+    public function __construct(
+        private PhirewallEngine $firewall,
+        private PsrHttpFactory $psrHttpFactory,
+        private HttpFoundationFactory $httpFoundationFactory,
+        private Psr17Factory $psr17,
+    ) {}
+
+    public function handle(Request $request, Closure $next): Response
+    {
+        $psrRequest = $this->psrHttpFactory->createRequest($request);
+        $probe = new class($this->psr17) implements RequestHandlerInterface {
+            private bool $invoked = false;
+            public function __construct(private readonly Psr17Factory $responseFactory) {}
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                $this->invoked = true;
+                return $this->responseFactory->createResponse();
+            }
+            public function wasInvoked(): bool { return $this->invoked; }
+        };
+        $psrResponse = $this->firewall->process($psrRequest, $probe);
+        if (! $probe->wasInvoked()) {
+            return $this->httpFoundationFactory->createResponse($psrResponse);
+        }
+        $response = $next($request);
+        foreach ($psrResponse->getHeaders() as $name => $values) {
+            $response->headers->set($name, $values);
+        }
+        return $response;
+    }
+}
+
+// 4. Register the bridge middleware (outermost):
+//    bootstrap/app.php (Laravel 11/12):
+//    ->withMiddleware(function (Middleware $middleware): void {
+//        $middleware->prepend(\App\Http\Middleware\Phirewall::class);
 //    })
 //
-// Or in app/Http/Kernel.php (Laravel 10):
+//    Or app/Http/Kernel.php (Laravel 10 and earlier):
 //    protected $middleware = [
-//        \Flowd\Phirewall\Middleware::class,
+//        \App\Http\Middleware\Phirewall::class,
 //        // ...
 //    ];
 ```
@@ -760,9 +858,26 @@ $config->throttles->add('api', limit: 100, period: 60,
 $config->setIpResolver(KeyExtractors::clientIp($resolver));
 ```
 
-::: warning
-Never trust `X-Forwarded-For` without configuring trusted proxies. An attacker can spoof this header to bypass rate limiting.
+::: danger Set a resolver behind a proxy — or every client shares one key
+`KeyExtractors::ip()` reads `REMOTE_ADDR` verbatim. Behind a CDN or load balancer that value is the *proxy's* address, so every client collapses onto a single throttle/ban key and your rate limits and bans become useless (or ban everyone at once). The same default applies to file-backed IP blocklists and infrastructure ban listeners. Whenever Phirewall runs behind a proxy, install a client-IP resolver — `$config->setIpResolver(KeyExtractors::clientIp(new TrustedProxyResolver([...])))` — so rules key on the originating client. And never trust `X-Forwarded-For` *without* configuring the trusted proxies: an attacker can otherwise spoof the header to forge any client IP.
 :::
+
+### Resolver behavior (0.5.0)
+
+`TrustedProxyResolver` walks the forwarded chain from right to left, skipping hops whose address is in your trusted-proxy list, and returns the first untrusted address as the client IP (falling back to `REMOTE_ADDR` when the chain yields nothing valid). A few details are worth knowing:
+
+```php
+// Constructor: trusted proxies first, then the header(s) to consult, then a chain cap.
+new TrustedProxyResolver(
+    trustedProxies: ['10.0.0.0/8', '172.16.0.0/12'],
+    allowedHeaders: ['X-Forwarded-For'], // default
+    maxChainEntries: 50,                 // default
+);
+```
+
+- **The default header is a single header.** `allowedHeaders` now defaults to `['X-Forwarded-For']` only. If your stack emits the RFC 7239 `Forwarded` header instead, pass it explicitly — `new TrustedProxyResolver([...], ['Forwarded'])`, or `['Forwarded', 'X-Forwarded-For']` for both — so the header the resolver trusts is visible at the call site rather than inferred.
+- **Only the last header instance is trusted.** If a request arrives with more than one `X-Forwarded-For` (or `Forwarded`) line, the resolver parses only the last instance — the one the closest proxy appended — and ignores any attacker-prepended duplicate line.
+- **IPv6 is canonicalized.** An IPv4-mapped IPv6 peer (`::ffff:203.0.113.7`) collapses to its embedded IPv4 form, so a plain IPv4 rule or CIDR matches it and an attacker cannot bypass an IPv4 rule by presenting the mapped form. Alternate *genuine*-IPv6 spellings (expanded `2001:0db8::1` vs compressed `2001:db8::1`, mixed case) are also treated as one identity by `ip()` / CIDR **list** matching, which compares the raw binary address. Rate-limit and ban keys, however, use the address exactly as the resolver returns it, so they rely on your proxy emitting a consistent spelling per client.
 
 ## First Test
 

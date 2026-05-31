@@ -104,7 +104,7 @@ RewriteRule ^(.*)$ index.php [L]
 # BEGIN Phirewall
 Require not ip 192.168.1.101
 Require not ip 10.0.0.50
-Require not ip 2001:db8::1
+Require not ip 2001:db8::5
 # END Phirewall
 
 # More custom rules (preserved)
