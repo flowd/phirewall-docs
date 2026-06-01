@@ -4,12 +4,9 @@ outline: deep
 
 # Presets
 
-Presets are ready-to-use rule bundles for recurring scenarios, so you don't have to hand-write the same rules each time. Each preset is defined internally as a [`PortableConfig`](/advanced/portable-config) — plain, inspectable, serializable data — and exposed two ways:
+Presets are ready-to-use rule bundles for recurring scenarios, so you don't have to hand-write the same rules each time. Each preset is a [`PortableConfig`](/advanced/portable-config) — plain, inspectable, serializable data you can diff, sign, or layer — returned by an accessor (e.g. `Presets::apiRateLimiting()`).
 
-- a factory returning a live `Config` (e.g. `Presets::apiRateLimiting($cache)`), and
-- an accessor returning the underlying `PortableConfig` (e.g. `Presets::apiRateLimitingPortable()`), so you can serialize, diff, sign, or layer it.
-
-Because presets ARE `Config`s, they layer with your own rules through [`Config::compose()` / `mergedWith()`](/advanced/config-composition), and every rule is namespaced `preset.<area>.*` so override-by-name is predictable.
+Materialize one or several onto your own cache with [`Config::combine()`](/advanced/config-composition); presets are pure data and never receive a cache. Every rule is namespaced `preset.<area>.*`, so a later layer that redefines it by name overrides predictably.
 
 ## Usage
 
@@ -17,25 +14,22 @@ Because presets ARE `Config`s, they layer with your own rules through [`Config::
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Preset\Presets;
 
-// A preset on its own (a Config requires a PSR-16 cache):
-$config = Presets::apiRateLimiting($cache);
+// A preset on its own — combine it onto a Config you build with your cache:
+$config = (new Config($cache))->combine(Presets::apiRateLimiting());
 
 // Inspect / serialize the underlying portable schema:
-$schema = Presets::apiRateLimitingPortable()->toArray();
+$schema = Presets::apiRateLimiting()->toArray();
 
-// Layer a preset under your own Config — your rules win by name:
-$config = Presets::loginProtection($cache)->mergedWith($myConfig);
-
-// Stack several presets, then your overrides last:
-$config = Config::compose(
-    Presets::scannerBlocking($cache),
-    Presets::sensitivePathBlocking($cache),
-    Presets::apiRateLimiting($cache),
-    $myConfig,
+// Stack several presets, then your own rules last (later layers win by name):
+$config = (new Config($cache))->combine(
+    Presets::scannerBlocking(),
+    Presets::sensitivePathBlocking(),
+    Presets::apiRateLimiting(),
+    $myPortable,
 );
 ```
 
-Both factory forms accept an optional PSR-14 event dispatcher as a second argument (`Presets::apiRateLimiting($cache, $dispatcher)`), so preset rules emit the same [observability events](/advanced/observability) as hand-written ones.
+Preset rules emit the same [observability events](/advanced/observability) as hand-written ones — wire your PSR-14 dispatcher into the `Config` you combine onto (`new Config($cache, $dispatcher)`).
 
 ## Shipped presets
 
@@ -46,13 +40,13 @@ Both factory forms accept an optional PSR-14 event dispatcher as a second argume
 | `scannerBlocking()` | `preset.scanner.known-tools` (known scanner/exploit User-Agents) and `preset.scanner.suspicious-headers` (requests missing the standard browser `Accept` / `Accept-Language` / `Accept-Encoding` headers). |
 | `sensitivePathBlocking()` | `preset.sensitive-path.probes` — pattern blocklist for `/.git`, `/.svn`, `/.hg`, `/.env*`, `/.aws/credentials`, `/.htpasswd`, `/.htaccess`, `/.DS_Store`. |
 
-Each preset also has a `…Portable()` accessor returning the `PortableConfig`, and the generic `Presets::portable($name)` / `Presets::config($name, $cache)` resolve a preset by one of the `Presets::names()` constants.
+Resolve any preset by name with `Presets::get($name)` (a `PortableConfig`), passing one of the `Presets::names()` constants.
 
 ## Conventions and overrides
 
 - `apiRateLimiting()` scopes its throttles to the `/api` path prefix; `loginProtection()` scopes its login throttle to `/login`.
 - The login fail2ban (`preset.login.bruteforce`) is **driven exclusively** by your login handler calling `$context->recordFailure(Presets::LOGIN_FAILURE_RULE)` after a failed authentication; that recorded-signal path bans on the rule's IP key and bypasses the filter. The rule uses a deliberately never-match filter so it cannot be tripped by any spoofable/forgeable request property — a forged marker header would otherwise let an attacker drive failures for an arbitrary client and, behind a shared proxy/CDN, ban everyone. See [Request Context](/advanced/request-context).
-- Override any rule by composing the preset with your own `Config` that redefines the rule by the same name (later layer wins), or by rebuilding the `…Portable()` schema.
+- Override any rule by combining the preset with your own portable rules that redefine the rule by the same name (later layer wins), or by rebuilding the preset's schema.
 - IP-keyed rules resolve the client from `REMOTE_ADDR`. Behind a load balancer or CDN, layer your own throttle keyed on a trusted client IP (see `KeyExtractors::clientIp()` with a [`TrustedProxyResolver`](/getting-started#client-ip-behind-proxies)) or on the authenticated principal, overriding the preset rule by name.
 
 > **Note:** `scannerBlocking()`'s `suspicious-headers` rule is the more aggressive of the two — some legitimate API clients, privacy tools, and embedded browsers also omit `Accept-*` headers. Drop or override it by name if your traffic includes non-browser clients.

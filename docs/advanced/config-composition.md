@@ -11,15 +11,19 @@ Real deployments rarely have a single source of firewall rules. A vendor ships a
 ```php
 use Flowd\Phirewall\Config;
 
-// Each layer is built independently — frequently rebuilt from a PortableConfig.
-$vendorBaseline   = $vendorPortable->toConfig($cache);   // shared product defaults
-$environmentLayer = $envPortable->toConfig($cache);      // staging vs. production
-$tenantLayer      = $tenantPortable->toConfig($cache);   // per-customer policy
-$deploymentTweak  = (new Config($cache))->setFailOpen(false);
+// Each layer is owned and versioned independently, usually as a PortableConfig.
+// Materialize them onto your cache with Config::combine() — later layers win.
+// The cache lives only on Config; the portable layers never carry one.
+$effective = (new Config($cache))->combine(
+    $vendorPortable,        // shared product defaults
+    $environmentPortable,   // staging vs. production
+    $tenantPortable,        // per-customer policy
+);
 
-// Later layers win. These two calls are equivalent:
-$effective = $vendorBaseline->mergedWith($environmentLayer, $tenantLayer, $deploymentTweak);
-$effective = Config::compose($vendorBaseline, $environmentLayer, $tenantLayer, $deploymentTweak);
+// Already holding Config instances? compose() / mergedWith() layer those directly
+// (same precedence — later layers win):
+$effective = $vendorConfig->mergedWith($environmentConfig, $tenantConfig);
+$effective = Config::compose($vendorConfig, $environmentConfig, $tenantConfig);
 ```
 
 `compose()` is static and reads as "base first, overlays after"; `mergedWith()` is the instance form for when you already hold the base. Both return a fresh `Config`; the base and every overlay are left untouched.

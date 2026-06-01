@@ -11,13 +11,14 @@ outline: deep
 - **diff and review it in git**, or
 - **share one ruleset across many apps, processes, or languages**
 
-…and then rebuild a live [`Config`](/getting-started) from it with `toConfig()`. Closures are never serialized, so the surface is intentionally a safe, declarative subset (see [Not portable by design](#not-portable-by-design)).
+…and then materialize a live [`Config`](/getting-started) from it with [`Config::combine()`](/advanced/config-composition) — the schema is pure data and never carries a cache. Closures are never serialized, so the surface is intentionally a safe, declarative subset (see [Not portable by design](#not-portable-by-design)).
 
 ## Building and round-tripping
 
-Build a ruleset fluently, export it with `toArray()` (or `json_encode()` the result), and rebuild it with `fromArray()` → `toConfig()`:
+Build a ruleset fluently, export it with `toArray()` (or `json_encode()` the result), and rebuild it with `fromArray()`, then materialize it onto a `Config` with `Config::combine()`:
 
 ```php
+use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Http\Firewall;
 use Flowd\Phirewall\Pattern\PatternKind;
 use Flowd\Phirewall\Portable\PortableConfig;
@@ -42,7 +43,7 @@ $portable = PortableConfig::create()
 $json = json_encode($portable->toArray(), JSON_THROW_ON_ERROR);
 
 // … and rebuild a live Config somewhere else.
-$config   = PortableConfig::fromArray(json_decode($json, true, 512, JSON_THROW_ON_ERROR))->toConfig($cache);
+$config   = (new Config($cache))->combine(PortableConfig::fromArray(json_decode($json, true, 512, JSON_THROW_ON_ERROR)));
 $firewall = new Firewall($config);
 ```
 
@@ -152,7 +153,7 @@ $reload = static function () use (&$store, &$loadedVersion, &$firewall, $secret,
     }
 
     $portable = PortableConfig::loadSigned($row['blob'], $secret);
-    $firewall = new Firewall($portable->toConfig($cache));
+    $firewall = new Firewall((new Config($cache))->combine($portable));
     $loadedVersion = $row['version'];
 
     return true;
@@ -184,7 +185,7 @@ See [`examples/28-portable-config-signing.php`](https://github.com/flowd/phirewa
 
 ## Not portable by design
 
-A few capabilities cannot be represented as pure data and are intentionally **excluded** from the schema. Configure these directly on the `Config` returned by `toConfig()`:
+A few capabilities cannot be represented as pure data and are intentionally **excluded** from the schema. Configure these directly on the `Config` you build before (or after) combining the portable rules in:
 
 | Excluded | Why |
 |----------|-----|
@@ -203,4 +204,4 @@ A few capabilities cannot be represented as pure data and are intentionally **ex
 
 - [Config Composition](/advanced/config-composition) — layer a portable ruleset under environment and tenant overlays.
 - [Presets](/advanced/presets) — ready-made rule bundles, each defined as a `PortableConfig`.
-- [Storage Backends](/features/storage) — the PSR-16 cache `toConfig()` needs.
+- [Storage Backends](/features/storage) — the PSR-16 cache a `Config` needs.
