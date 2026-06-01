@@ -51,6 +51,10 @@ Because "default-valued" is read as "no opinion", an overlay **cannot turn a tog
 
 If you need a later layer to *force* a non-default option back to the default, do not rely on composition: build the final `Config` and set the option explicitly after composing, e.g. `Config::compose(...)->setFailOpen(true)`.
 
+### Limitation: composing the IP resolver does not rewrite existing rules
+
+IP-aware matchers (`IpMatcher`, the file/snapshot IP blocklists, `TrustedBotMatcher`) capture their IP resolver **when the rule is constructed**. Because composition copies already-built rule objects, composing a layer with a different IP resolver only affects rules added *after* it — it does **not** retroactively change how earlier layers' IP rules resolve the client IP. Set the resolver on each source `Config` (via `setIpResolver()`) **before** adding its IP rules, rather than expecting a later layer to override it.
+
 ## Example
 
 ```php
