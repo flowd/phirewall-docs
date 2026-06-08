@@ -862,7 +862,26 @@ $app->pipe(\Mezzio\Router\Middleware\DispatchMiddleware::class);
 composer require flowd/typo3-firewall
 ```
 
-Phirewall is then configured in TYPO3's core configuration file `config/system/phirewall.php` (the full [Phirewall configuration](/getting-started) applies there), and block patterns created in the backend module are stored in `config/system/phirewall.patterns.json` and take effect immediately. See the [extension documentation](https://docs.typo3.org/p/flowd/typo3-firewall/main/en-us/) for details.
+Phirewall is then configured in TYPO3's core configuration file `config/system/phirewall.php`. That file must **return a closure** that receives the PSR-14 `EventDispatcherInterface` and returns a built `Config` (the cache is the first constructor argument, the dispatcher the second). The full [Phirewall configuration](/getting-started) applies inside the closure; use one of Phirewall's bundled PSR-16 stores (`RedisCache`, `ApcuCache`, `PdoCache`), since TYPO3's own caches are not PSR-16.
+
+```php
+<?php
+// config/system/phirewall.php
+use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Store\ApcuCache;
+use Psr\EventDispatcher\EventDispatcherInterface;
+
+return function (EventDispatcherInterface $eventDispatcher): Config {
+    $config = new Config(new ApcuCache(), $eventDispatcher);
+
+    $config->blocklists->knownScanners();
+    $config->throttles->add('burst', limit: 30, period: 5);
+
+    return $config;
+};
+```
+
+Block patterns created in the backend module are stored in `config/system/phirewall.patterns.json` and take effect immediately. See the [extension documentation](https://docs.typo3.org/p/flowd/typo3-firewall/main/en-us/) for details.
 
 ---
 
