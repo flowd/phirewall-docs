@@ -34,7 +34,7 @@ $config = new Config($cache);
 
 - Zero external dependencies
 - Data resets on every request in PHP-FPM (each request is a new process)
-- Data persists for the lifetime of a long-running process (CLI, Swoole, RoadRunner)
+- Under long-running worker runtimes (Swoole, RoadRunner, FrankenPHP worker mode, Octane) the array lives for the worker's lifetime: state is **not** shared across workers (each worker is a separate process, so counters and bans fragment) and the array only evicts already-expired entries, so it is not a memory cap. This makes it unsafe as a firewall store there; see the warning below.
 - Implements both `CacheInterface` (PSR-16) and `CounterStoreInterface`
 - Automatic expired entry purging every 1000 operations
 
@@ -67,15 +67,20 @@ $clock->advance(60); // Move forward 60 seconds
 - Unit tests and integration tests
 - Development and prototyping
 - Single-script CLI tools
-- Long-running processes where per-process state is acceptable
 
 ### When NOT to Use
 
 - PHP-FPM production (counters reset each request)
 - Multi-server deployments (no shared state)
+- Long-running worker runtimes (Swoole, RoadRunner, FrankenPHP worker mode, Octane): state fragments across workers and grows unbounded within a worker
 
 ::: warning
-In coroutine-based servers (Swoole), `InMemoryCache` may experience race conditions under high concurrency because it uses plain PHP arrays with no locking. Use `RedisCache` or `ApcuCache` for production Swoole deployments.
+Two distinct problems make `InMemoryCache` unsuitable for the firewall under long-running worker runtimes (Swoole, RoadRunner, FrankenPHP worker mode, Octane):
+
+1. **No shared state across workers.** Each worker is a separate OS process with its own array, so a counter or ban set in one worker is invisible to the others. The effective rate limit becomes roughly N times the configured value (N workers), and a client banned on one worker is not banned on the rest.
+2. **Coroutine races within a worker.** In coroutine servers like Swoole, the plain PHP arrays have no locking, so concurrent coroutines in the same worker can race.
+
+Use a shared store under these runtimes: `RedisCache` (preferred) or `PdoCache`. Note that `ApcuCache` does **not** solve problem 1: APCu memory is per process, so counters and bans still fragment across workers.
 :::
 
 ## ApcuCache

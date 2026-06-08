@@ -667,7 +667,7 @@ class FirewallEventsTest extends TestCase
 ```
 
 ::: tip Use `Firewall` directly in tests
-The `Firewall` class returns a `Decision` object with `isPass()` and `isBlock()` methods. This is faster than running through the full PSR-15 middleware pipeline and does not require a PSR-17 response factory.
+The `Firewall` class returns a `FirewallResult` object with `isPass()` and `isBlocked()` methods. This is faster than running through the full PSR-15 middleware pipeline and does not require a PSR-17 response factory.
 :::
 
 ## Performance Considerations

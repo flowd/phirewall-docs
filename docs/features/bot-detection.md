@@ -109,14 +109,14 @@ $config->blocklists->suspiciousHeaders();
 ```php
 $config->blocklists->suspiciousHeaders(
     string $name = 'suspicious-headers',
-    array $requiredHeaders = []
+    ?array $requiredHeaders = null
 ): BlocklistSection
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier (default: `'suspicious-headers'`) |
-| `$requiredHeaders` | `list<string>` | Headers that must be present. Empty array uses defaults. |
+| `$requiredHeaders` | `?list<string>` | Headers that must be present (case-sensitive header names). `null` uses the default set; a non-null list replaces the defaults. Passing `[]` requires nothing and never matches; do not use it for defaults. |
 
 ### Default Required Headers
 
@@ -356,7 +356,7 @@ Blocklists (knownScanners, suspiciousHeaders) --> match? --> 403 BLOCK
    No match
    |
    v
-Fail2Ban / Allow2Ban --> banned? --> 403 BLOCK
+Fail2Ban --> banned? --> 403 BLOCK
    |
    Not banned
    |
@@ -364,6 +364,11 @@ Fail2Ban / Allow2Ban --> banned? --> 403 BLOCK
 Throttles --> over limit? --> 429 TOO MANY REQUESTS
    |
    Under limit
+   |
+   v
+Allow2Ban --> over volume cap? --> 403 BLOCK
+   |
+   Under cap
    |
    v
 ALLOW (pass to handler)

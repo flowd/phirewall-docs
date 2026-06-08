@@ -253,7 +253,7 @@ Block known attack tools (sqlmap, nikto, nuclei, etc.) with a single call:
 $config->blocklists->knownScanners();
 ```
 
-The default list covers 24 tools. Extend or replace it:
+The default list covers 24 tools (26 substring patterns). Extend or replace it:
 
 ```php
 use Flowd\Phirewall\Matchers\KnownScannerMatcher;

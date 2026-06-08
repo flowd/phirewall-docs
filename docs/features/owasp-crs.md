@@ -87,11 +87,27 @@ $skipped = $report['skipped']; // int - Lines that were skipped
 
 | Method | Parameters | Description |
 |--------|-----------|-------------|
-| `fromString()` | `string $rulesText, ?string $contextFolder` | Parse rules from a string |
-| `fromFile()` | `string $filePath` | Load rules from a single file |
-| `fromFiles()` | `list<string> $paths` | Load and merge multiple files |
-| `fromDirectory()` | `string $dir, ?callable $filter` | Load all files in a directory |
-| `fromStringWithReport()` | `string $rulesText` | Parse with statistics |
+| `fromString()` | `string $rulesText, ?string $contextFolder = null, ?int $maxValuesPerCrsVariable = null` | Parse rules from a string |
+| `fromFile()` | `string $filePath, ?int $maxValuesPerCrsVariable = null` | Load rules from a single file |
+| `fromFiles()` | `list<string> $paths, ?int $maxValuesPerCrsVariable = null` | Load and merge multiple files |
+| `fromDirectory()` | `string $dir, ?callable $filter = null, ?int $maxValuesPerCrsVariable = null` | Load all files in a directory |
+| `fromStringWithReport()` | `string $rulesText, ?int $maxValuesPerCrsVariable = null` | Parse with statistics |
+
+## Per-Variable Value Cap (CPU-DoS Guard)
+
+Every `SecRuleLoader` factory accepts an optional trailing `?int $maxValuesPerCrsVariable`. It bounds how many collected values a single CRS variable (such as `ARGS`) may contribute to evaluation, so an attacker cannot drive up per-request WAF cost by submitting thousands of parameters, headers, or cookies. The cap is **per variable**, not aggregate.
+
+```php
+use Flowd\Phirewall\Owasp\SecRuleLoader;
+
+// Cap each CRS variable at 5000 collected values.
+$rules = SecRuleLoader::fromFile('/etc/phirewall/owasp.conf', maxValuesPerCrsVariable: 5000);
+$rules = SecRuleLoader::fromString($rulesText, maxValuesPerCrsVariable: 5000);
+```
+
+- **Default (`null`):** twice PHP's `max_input_vars`, falling back to `2000` (`RequestVariableValues::DEFAULT_MAX_VALUES_PER_CRS_VARIABLE`) when `max_input_vars` is unset or non-positive. Doubling `max_input_vars` sizes the budget to the parameter count the runtime actually accepts (variables such as `ARGS` emit both a name and a value per parameter), so a request PHP can fully parse is never falsely truncated.
+- **Fail-closed:** when a variable's values are truncated at the cap, the affected deny rules fail **closed** (the request is blocked) rather than evaluating a partial value set. An attacker therefore cannot pad a payload past the cap to slip past a deny rule.
+- **Explicit non-positive value throws:** passing an explicit cap below `1` raises `\InvalidArgumentException`, because a non-positive cap would fail every deny rule closed and block all traffic.
 
 ## Supported SecRule Syntax
 

@@ -16,7 +16,8 @@ Phirewall works with any PSR-15 (PHP Standard Recommendation for HTTP Server Mid
 
 - **Slim** (4.x+)
 - **Mezzio** (Laminas)
-- **Laravel** (via PSR-15 bridge or `nyholm/psr7`)
+- **TYPO3** (v12/v13, via an extension middleware)
+- **Laravel** (via `symfony/psr-http-message-bridge` + `nyholm/psr7`)
 - **Symfony** (via `symfony/psr-http-message-bridge`)
 - **Spiral**
 - **Any custom PSR-15 middleware stack**
@@ -206,6 +207,15 @@ $config->fail2ban->add('login', threshold: 5, period: 300, ban: 3600, filter: ..
 
 See the [Getting Started](/getting-started) guide for the full section API reference.
 
+### What changed in 0.5.0 that affects an upgrade?
+
+A few behaviour changes can affect an existing deployment on upgrade:
+
+- **`isBanned()` now requires a `BanType`.** Both `Http\Firewall::isBanned()` and `BanManager::isBanned()` take a mandatory third argument `BanType $banType` (no default), because allow2ban and fail2ban bans live under distinct cache keys. Update any 2-argument call to pass `BanType::Fail2Ban` or `BanType::Allow2Ban`.
+- **Cache-key separator changed from `:` to `.`.** Existing throttle/fail2ban counters and active bans are keyed with the old separator, so on the first deploy they are orphaned: counters reset and currently-banned clients are briefly un-banned. This is a one-time effect that self-heals as new keys are written; orphaned entries expire by TTL. Bump your `keyPrefix` or drain the cache on deploy if you want a clean cut.
+- **`setKeyPrefix()` rejects reserved/control/whitespace characters.** A colon-namespaced prefix such as `app:prod` now throws `InvalidArgumentException`; use `app.prod` (see [Discriminator Normalizer](/advanced/discriminator-normalizer)). The cache backends likewise throw `InvalidCacheKeyException` on reserved, empty, or control keys.
+- **`TrustedProxyResolver` defaults to a single header.** `allowedHeaders` now defaults to `['X-Forwarded-For']` only. If your upstream emits RFC 7239, pass `['Forwarded']` or `['Forwarded', 'X-Forwarded-For']` explicitly (see [How do I handle trusted proxies?](#how-do-i-handle-trusted-proxies)).
+
 ## Rate Limiting
 
 ### What rate limiting algorithms does Phirewall support?
@@ -277,6 +287,7 @@ See [Dynamic Throttle: Per-User Tier Limits](/advanced/dynamic-throttle#per-user
 | Testing / Development | `InMemoryCache` | No dependencies, resets each request |
 | Single server | `ApcuCache` | Sub-microsecond, shared across PHP-FPM workers |
 | Multiple servers | `RedisCache` | Shared state, atomic operations |
+| Long-running workers (Swoole, RoadRunner, FrankenPHP, Octane) | `RedisCache` (or `PdoCache`) | Each worker is a separate process; avoid `InMemoryCache` and `ApcuCache`, whose state fragments across workers |
 | Kubernetes / Docker | `RedisCache` | Containers are ephemeral, need external state |
 | Serverless | `RedisCache` (external) | Function instances are short-lived |
 | No Redis available | `PdoCache` | MySQL, PostgreSQL, or SQLite |
@@ -285,15 +296,18 @@ See [Storage Backends](/features/storage) for a detailed comparison.
 
 ### Can I use Symfony Cache or Laravel Cache?
 
-Yes. Phirewall accepts any PSR-16 (PHP Standard Recommendation for Simple Caching) compatible implementation. However, generic PSR-16 caches may have non-atomic counter increments. For production, prefer the bundled `RedisCache` or `ApcuCache` for accuracy.
+Yes, Phirewall accepts any PSR-16 (PHP Standard Recommendation for Simple Caching) compatible implementation, but note that most host-framework caches are **not** PSR-16 out of the box: Laravel's `Cache` repository (`Illuminate\Contracts\Cache\Repository`) and TYPO3's caching framework (`FrontendInterface`) are not `Psr\SimpleCache\CacheInterface`, so passing one directly to `Config` is a type error. Symfony Cache exposes a PSR-16 adapter (`Symfony\Component\Cache\Psr16Cache`) you can wrap a pool in. For production, prefer the bundled `RedisCache` or `ApcuCache`: they implement `CounterStoreInterface` for atomic increments, whereas a generic PSR-16 cache may have non-atomic counter increments.
 
 ### Why does InMemoryCache not work in production?
 
 In PHP-FPM (FastCGI Process Manager), each request starts a new process (or reuses one from the pool). The in-memory cache is empty at the start of each request, so counters always reset to zero. This means rate limits and ban counters never accumulate.
 
+Under long-running worker runtimes (Swoole, RoadRunner, FrankenPHP worker mode, Octane) the failure is the opposite and easy to miss: the array survives across requests within a worker, so a single-worker demo looks like it "works", but each worker is a separate process with its own array. State is never shared across workers (counters and bans fragment, so the effective rate limit is roughly N times the configured value) and the array grows for the worker's lifetime.
+
 Solutions:
 - **Single server**: use `ApcuCache` (shared memory across the FPM pool)
 - **Multiple servers**: use `RedisCache` (shared across all servers)
+- **Long-running workers**: use `RedisCache` or `PdoCache` (not `ApcuCache`, whose memory is per process)
 - **Any server**: use `PdoCache` with a database
 
 ## OWASP Rules
@@ -441,11 +455,21 @@ if ($result->isBlocked()) {
 Use the `Firewall` class:
 
 ```php
+use Flowd\Phirewall\BanType;
+
 $firewall = new Firewall($config);
 
 // Reset a specific throttle counter
 $firewall->resetThrottle('api', '192.168.1.100');
 
+// Lift a specific fail2ban ban (also clears its fail counter)
+$firewall->resetFail2Ban('login-failures', '192.168.1.100');
+
+// Check whether a key is currently banned (BanType is required as of 0.5.0)
+$banned = $firewall->isBanned('login-failures', '192.168.1.100', BanType::Fail2Ban);
+
 // Reset all counters and bans
 $firewall->resetAll();
 ```
+
+`BanType` is `enum BanType: string { case Allow2Ban = 'allow2ban'; case Fail2Ban = 'fail2ban'; }`.

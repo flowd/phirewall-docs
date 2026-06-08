@@ -4,7 +4,7 @@ outline: deep
 
 # Rate Limiting
 
-Phirewall provides rate limiting (throttling) that returns `429 Too Many Requests` when limits are exceeded. Throttle rules are evaluated after safelists, blocklists, and Fail2Ban -- making them the last check before a request reaches your application.
+Phirewall provides rate limiting (throttling) that returns `429 Too Many Requests` when limits are exceeded. Throttle rules are evaluated after safelists, blocklists, and Fail2Ban, and before Allow2Ban.
 
 Three throttle strategies are available:
 
@@ -18,6 +18,10 @@ Three throttle strategies are available:
 For a ready-made per-client API rate limit (burst + sustained, scoped to `/api`), the [`apiRateLimiting()` preset](/advanced/presets) ships the rules below pre-configured.
 :::
 
+::: tip Default key
+The `key` argument on `add()`, `sliding()`, and `multi()` is optional. When omitted, the throttle keys on the client IP resolved by the Config's IP resolver (set via `Config::setIpResolver(KeyExtractors::clientIp($trustedProxyResolver))` behind a proxy), falling back to `KeyExtractors::ip()` (REMOTE_ADDR) when none is set. The resolver is read per request, so it can be set before or after adding rules. The examples below pass `key:` explicitly to make the keying visible.
+:::
+
 ## Fixed Window Throttle
 
 The default strategy. Time is divided into fixed windows (e.g., 60-second intervals aligned to clock time) and each unique key gets a counter that resets at the end of the window.
@@ -27,7 +31,7 @@ $config->throttles->add(
     string $name,
     int|Closure $limit,
     int|Closure $period,
-    Closure $key
+    ?Closure $key = null
 ): ThrottleSection
 ```
 
@@ -36,7 +40,7 @@ $config->throttles->add(
 | `$name` | `string` | Unique rule identifier |
 | `$limit` | `int\|Closure` | Max requests per window, or a [dynamic closure](#dynamic-limits) |
 | `$period` | `int\|Closure` | Window size in seconds, or a [dynamic closure](#dynamic-limits) |
-| `$key` | `Closure` | `fn(ServerRequestInterface): ?string` -- return a key to group by, or `null` to skip |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string` -- return a key to group by, or `null` to skip. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 
 ```php
 use Flowd\Phirewall\KeyExtractors;
@@ -65,7 +69,7 @@ $config->throttles->sliding(
     string $name,
     int|Closure $limit,
     int|Closure $period,
-    Closure $key
+    ?Closure $key = null
 ): ThrottleSection
 ```
 
@@ -108,7 +112,7 @@ The `multi()` method registers multiple throttle windows under a single logical 
 $config->throttles->multi(
     string $name,
     array $windowLimits,
-    Closure $key
+    ?Closure $key = null
 ): ThrottleSection
 ```
 
@@ -116,7 +120,7 @@ $config->throttles->multi(
 |-----------|------|-------------|
 | `$name` | `string` | Logical name prefix |
 | `$windowLimits` | `array<int, int>` | Map of period (seconds) => limit (max requests) |
-| `$key` | `Closure` | Key extractor closure |
+| `$key` | `?Closure` | Key extractor closure (shared across all windows). Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 
 Each entry creates a sub-rule named `{$name}:{$period}s`. Windows are evaluated shortest-first (burst before sustained).
 
@@ -159,7 +163,7 @@ $config->throttles->add(
     string $name,
     int|Closure(ServerRequestInterface): int $limit,
     int|Closure(ServerRequestInterface): int $period,
-    Closure $key
+    ?Closure $key = null
 ): ThrottleSection
 ```
 

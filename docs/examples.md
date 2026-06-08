@@ -49,7 +49,7 @@ php examples/01-basic-setup.php
 | 28 | [portable-config-signing](https://github.com/flowd/phirewall/blob/main/examples/28-portable-config-signing.php) | Signed PortableConfig transport (HMAC-SHA256) |
 | 29 | [portable-config](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) | PortableConfig as a first-class transport with DB hot-reload |
 | 30 | [config-composition](https://github.com/flowd/phirewall/blob/main/examples/30-config-composition.php) | Layering configs (vendor → environment → tenant → deployment) |
-| 31 | [presets](https://github.com/flowd/phirewall/blob/main/examples/31-presets.php) | Ready-to-use rule presets and the update-check seam |
+| 31 | [presets](https://github.com/flowd/phirewall/blob/main/examples/31-presets.php) | Ready-to-use rule presets and version comparison (compare `Presets::VERSION` against your own release feed) |
 
 ---
 
@@ -626,7 +626,7 @@ protected $middleware = [
 
 ### Slim
 
-Native PSR-15 support. No external dependencies beyond `ext-apcu`.
+Native PSR-15 support. Requires a PSR-17 factory (`slim/psr7` ships with the Slim skeleton, or install `nyholm/psr7`) plus `ext-apcu` for `ApcuCache`. Without a PSR-17 factory the middleware constructor throws, since it auto-detects a `ResponseFactory`.
 
 ```php
 <?php
@@ -761,7 +761,7 @@ class PhirewallMiddlewareFactory
         $config = new Config($cache);
         $config->setKeyPrefix('mezzio');
         $config->enableRateLimitHeaders();
-        $config->setFailOpen(true);
+        // failOpen defaults to true; call setFailOpen(false) to fail closed.
 
         // ── Trusted Proxies ──────────────────────────────────────
         $proxyResolver = new TrustedProxyResolver([
@@ -849,13 +849,128 @@ return [
 **`config/pipeline.php`**
 
 ```php
-// Phirewall must be the outermost middleware (piped first)
+// ErrorHandler must be piped FIRST so it can catch exceptions thrown by
+// downstream middleware and route handlers. Phirewall does not wrap the
+// downstream handler in a try/catch, so a handler exception propagates
+// through it; if Phirewall were piped above ErrorHandler, that exception
+// would escape the error boundary and reach the emitter unhandled.
+$app->pipe(\Laminas\Stratigility\Middleware\ErrorHandler::class);
+
+// Phirewall runs as early as possible AFTER the error boundary, so it
+// blocks before routing/dispatch while still being covered by ErrorHandler.
 $app->pipe(\Flowd\Phirewall\Middleware::class);
 
 // ... other middleware
 $app->pipe(\Mezzio\Router\Middleware\RouteMiddleware::class);
 $app->pipe(\Mezzio\Router\Middleware\DispatchMiddleware::class);
 ```
+
+---
+
+### TYPO3
+
+**Use the official extension.** For TYPO3, install [`flowd/typo3-firewall`](https://extensions.typo3.org/extension/firewall) rather than wiring Phirewall by hand. It integrates Phirewall into TYPO3, registers the PSR-15 middleware in the frontend stack for you, and adds a backend module for managing block patterns.
+
+```bash
+composer require flowd/typo3-firewall
+```
+
+Phirewall is then configured in TYPO3's core configuration file `config/system/phirewall.php` (the full [Phirewall configuration](/getting-started) applies there), and block patterns created in the backend module are stored in `config/system/phirewall.patterns.json` and take effect immediately. See the [extension documentation](https://docs.typo3.org/p/flowd/typo3-firewall/main/en-us/) for details.
+
+#### Manual integration (without the extension)
+
+If you cannot use the extension, TYPO3 (v12/v13) runs a PSR-15 middleware stack, so Phirewall can plug in through your own extension's `Configuration/RequestMiddlewares.php`. Two TYPO3 specifics matter:
+
+- **The middleware is resolved from the DI container**, so its service must be **public**. The `#[Autoconfigure(public: true)]` attribute below marks it public; it relies on your extension's standard `Configuration/Services.yaml` loading `../Classes/*` (the default extension skeleton already does).
+- **TYPO3's caching framework is not PSR-16.** `CacheManager::getCache()` returns a `\TYPO3\CMS\Core\Cache\Frontend\FrontendInterface`, not a `Psr\SimpleCache\CacheInterface`, so it cannot be passed to `Config` directly. Use one of Phirewall's bundled PSR-16 stores (`RedisCache`, `ApcuCache`, `PdoCache`); to reuse a TYPO3 cache you would need a PSR-16 adapter (e.g. `ssch/typo3-psr-cache-adapter`).
+
+Phirewall ships as a PSR-15 middleware that takes a `Config` (which needs a cache and a PSR-17 factory), so it is not autowirable as-is. Wrap it in a small middleware class your extension owns:
+
+**`Classes/Middleware/PhirewallMiddleware.php`**
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace MyVendor\MyExtension\Middleware;
+
+use Flowd\Phirewall\Config;
+use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+use Flowd\Phirewall\Middleware as Phirewall;
+use Flowd\Phirewall\Store\RedisCache;
+use Nyholm\Psr7\Factory\Psr17Factory;
+use Predis\Client as PredisClient;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\MiddlewareInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
+
+#[Autoconfigure(public: true)]
+final class PhirewallMiddleware implements MiddlewareInterface
+{
+    private Phirewall $phirewall;
+
+    public function __construct()
+    {
+        $psr17 = new Psr17Factory();
+
+        // Use a shared PSR-16 store. TYPO3's own caches are not PSR-16.
+        $cache = new RedisCache(new PredisClient('tcp://127.0.0.1:6379'));
+
+        $config = new Config($cache);
+        $config->setKeyPrefix('typo3');
+        $config->enableRateLimitHeaders();
+
+        // TYPO3 sits behind a reverse proxy in most setups; resolve the
+        // real client IP so rules key on the visitor, not the proxy.
+        $config->setIpResolver(
+            KeyExtractors::clientIp(new TrustedProxyResolver(['10.0.0.0/8']))
+        );
+
+        $config->safelists->add('health',
+            fn(ServerRequestInterface $req): bool =>
+                $req->getUri()->getPath() === '/health'
+        );
+        $config->blocklists->knownScanners();
+        $config->throttles->add('burst', limit: 30, period: 5, key: KeyExtractors::ip());
+
+        $config->usePsr17Responses($psr17, $psr17);
+
+        $this->phirewall = new Phirewall($config, $psr17);
+    }
+
+    public function process(
+        ServerRequestInterface $request,
+        RequestHandlerInterface $handler,
+    ): ResponseInterface {
+        return $this->phirewall->process($request, $handler);
+    }
+}
+```
+
+**`Configuration/RequestMiddlewares.php`**
+
+```php
+<?php
+
+return [
+    'frontend' => [
+        'myvendor/myextension/phirewall' => [
+            'target' => \MyVendor\MyExtension\Middleware\PhirewallMiddleware::class,
+            // Run after normalized params (so the resolved client IP is
+            // available) and before site resolution, so a blocked request
+            // never triggers site/page lookup work.
+            'after' => ['typo3/cms-core/normalized-params-attribute'],
+            'before' => ['typo3/cms-frontend/site'],
+        ],
+    ],
+];
+```
+
+After changing the middleware order, verify the computed stack in the TYPO3 backend (System → Configuration, or the `lowlevel` configuration module).
 
 ---
 

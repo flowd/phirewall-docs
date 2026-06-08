@@ -48,7 +48,7 @@ $config->fail2ban->add(
     int $period,
     int $ban,
     Closure $filter,
-    Closure $key
+    ?Closure $key = null
 ): Fail2BanSection
 ```
 
@@ -59,7 +59,7 @@ $config->fail2ban->add(
 | `$period` | `int` | Time window for counting matches in seconds (must be >= 1) |
 | `$ban` | `int` | Ban duration in seconds (must be >= 1) |
 | `$filter` | `Closure` | `fn(ServerRequestInterface): bool` -- return `true` to count as a match |
-| `$key` | `Closure` | `fn(ServerRequestInterface): ?string` -- return key to track, or `null` to skip |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string` -- return key to track, or `null` to skip. When the whole argument is omitted, defaults to the client IP from the Config's IP resolver (`Config::setIpResolver()`, typically `KeyExtractors::clientIp($proxy)`), falling back to `KeyExtractors::ip()` (REMOTE_ADDR). The resolver is read per request, so it can be set before or after the rule. |
 
 ::: warning
 Fail2Ban filters evaluate the **incoming request** before the handler runs. The filter can only inspect request data (path, method, headers, query parameters). It cannot see the application's response. To ban based on application outcomes (like actual failed logins), use the [Request Context API](#post-handler-signaling-with-requestcontext) instead.
@@ -302,7 +302,7 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
             Increment request counter
                     |
                     v
-            Counter >= threshold? --> No --> Continue to throttle rules
+            Counter >= threshold? --> No --> Allow (pass to handler)
                     |
                     Yes
                     |
@@ -320,7 +320,7 @@ $config->allow2ban->add(
     int $threshold,
     int $period,
     int $banSeconds,
-    Closure $key
+    ?Closure $key = null
 ): Allow2BanSection
 ```
 
@@ -330,7 +330,7 @@ $config->allow2ban->add(
 | `$threshold` | `int` | Number of requests that triggers the ban (must be >= 1). The Nth request is itself banned (matching rack-attack `maxretry` semantics). |
 | `$period` | `int` | Time window for counting requests in seconds (must be >= 1) |
 | `$banSeconds` | `int` | Ban duration in seconds (must be >= 1) |
-| `$key` | `Closure` | `fn(ServerRequestInterface): ?string` -- return key to track, or `null` to skip |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string` -- return key to track, or `null` to skip. When omitted, defaults to the client IP from the Config's IP resolver (see Fail2Ban's `$key` above). |
 
 ::: tip
 Note the parameter name difference: Fail2Ban uses `$ban`, Allow2Ban uses `$banSeconds`. Both accept duration in seconds.
@@ -410,6 +410,46 @@ $config->allow2ban->add(
 | **Use case** | Brute force, credential stuffing, scanner blocking | Volume abuse, DDoS mitigation, API abuse |
 | **Event** | `Fail2BanBanned` | `Allow2BanBanned` |
 | **Ban parameter** | `$ban` | `$banSeconds` |
+
+## Managing Bans
+
+`Flowd\Phirewall\Http\Firewall` is the supported runtime-management entry point. Construct it with the same `Config` your middleware uses; all state lives in the `Config` cache, so every `Firewall` over the same `Config` shares bans and counters.
+
+```php
+use Flowd\Phirewall\BanType;
+use Flowd\Phirewall\Http\Firewall;
+
+$firewall = new Firewall($config);
+
+// Is a key currently banned? BanType is REQUIRED (no default).
+$firewall->isBanned('login-failures', $ip, BanType::Fail2Ban);
+$firewall->isBanned('high-volume-ban', $ip, BanType::Allow2Ban);
+
+// Lift a specific fail2ban ban (also clears its fail counter).
+$firewall->resetFail2Ban('login-failures', $ip);
+
+// Clear a throttle counter.
+$firewall->resetThrottle('api', $ip);
+
+// Clear the whole cache instance (counters, bans, tracking).
+$firewall->resetAll();
+```
+
+`isBanned()` requires an explicit `BanType` because allow2ban and fail2ban store their bans under distinct cache keys, so an implicit default would silently answer for the wrong category:
+
+```php
+enum BanType: string
+{
+    case Allow2Ban = 'allow2ban';
+    case Fail2Ban = 'fail2ban';
+}
+```
+
+Notes:
+
+- For `multi()` throttle sub-rules, reset each window individually (for example `'api:1s'` and `'api:60s'`); for dynamic-period rules, pass the `:p{period}` suffix.
+- `resetAll()` calls `cache->clear()` and wipes the entire cache instance, so give phirewall a dedicated cache (or key-prefixed namespace) if you share Redis/APCu with your application.
+- All keys are normalized through the discriminator normalizer, so lookups match regardless of input casing.
 
 ## Events
 

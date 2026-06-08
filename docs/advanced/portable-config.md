@@ -85,12 +85,12 @@ Everything `PortableConfig` can express today.
 | `filterHeaderRegex(name, pattern)` | header `name` matches the PCRE `pattern` |
 | `filterIp(ipsOrCidrs)` | the client IP is in the list (CIDR-aware, IPv4/IPv6) — backed by `IpMatcher` |
 | `filterKnownScanners(patterns = null)` | the User-Agent matches a known scanner; `null` uses the curated default list — backed by `KnownScannerMatcher` |
-| `filterSuspiciousHeaders(headers = null)` | a required browser header is missing; `null` uses the default set — backed by `SuspiciousHeadersMatcher` |
+| `filterSuspiciousHeaders(requiredHeaders = null)` | a required browser header is missing; `null` uses the default set — backed by `SuspiciousHeadersMatcher` |
 
 `filterIp`, `filterKnownScanners`, and `filterSuspiciousHeaders` compile to the dedicated matcher classes (so you get their diagnostics and CIDR handling); the remaining filters compile to a request-predicate closure.
 
 ::: warning
-`filterHeaderEquals` is rejected on `safelist()` (and on `fromArray()` deserialize) — a static header value would be a plaintext bypass token. It remains valid on blocklists, throttles, fail2ban, and track rules.
+`filterHeaderEquals`, `filterHeaderPresent`, and `filterHeaderRegex` are rejected on `safelist()` (and on `fromArray()` deserialize): a client-controlled header value would be a forgeable bypass token (anyone presenting it skips every downstream rule). They remain valid on blocklists, throttles, fail2ban, and track rules.
 :::
 
 ### Key extractors

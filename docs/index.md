@@ -30,6 +30,9 @@ features:
   - icon: "\uD83D\uDD04"
     title: Fail2Ban & Allow2Ban
     details: Ban clients after threshold violations. Signal failures from your application handler via RequestContext.
+  - icon: "\uD83E\uDDE9"
+    title: Presets & Portable Config
+    details: Ship ready-made rule bundles (API rate limiting, login protection, scanner blocking, sensitive-path blocking) as serializable PortableConfig data. Layer them with Config::combine() and Config::compose(), and override any rule by name.
   - icon: "\uD83D\uDCE6"
     title: PSR-15 Compatible
     details: Works with any PSR-15 framework — Laravel, Symfony, Slim, TYPO3, Mezzio, and more.

@@ -33,7 +33,7 @@ $config->tracks->add(
     string   $name,
     int      $period,
     Closure  $filter,
-    Closure  $key,
+    ?Closure $key = null,
     ?int     $limit = null   // optional threshold
 ): TrackSection
 ```
@@ -43,7 +43,7 @@ $config->tracks->add(
 | `$name` | `string` | Unique rule identifier (must not be empty) |
 | `$period` | `int` | Time window for counting in seconds (must be >= 1) |
 | `$filter` | `Closure` | `fn(ServerRequestInterface): bool` -- return `true` to count this request |
-| `$key` | `Closure` | `fn(ServerRequestInterface): ?string` -- return the grouping key, or `null` to skip counting |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string` -- return the grouping key, or `null` to skip counting. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 | `$limit` | `?int` | Optional threshold. When set, the `TrackHit` event includes a `thresholdReached` flag that becomes `true` once the counter reaches this value |
 
 ::: tip Return type

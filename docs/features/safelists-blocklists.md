@@ -248,14 +248,14 @@ Block requests missing standard HTTP headers that real browsers typically send. 
 ```php
 $config->blocklists->suspiciousHeaders(
     string $name = 'suspicious-headers',
-    array $requiredHeaders = []
+    ?array $requiredHeaders = null
 ): BlocklistSection
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Rule identifier (default: `'suspicious-headers'`) |
-| `$requiredHeaders` | `list<string>` | Headers that must be present. Empty uses defaults |
+| `$requiredHeaders` | `?list<string>` | Headers that must be present. `null` uses the default set (`Accept`, `Accept-Language`, `Accept-Encoding`). A non-null list replaces the defaults entirely; do NOT pass `[]` expecting defaults (it requires zero headers and never matches) |
 
 Default required headers: `Accept`, `Accept-Language`, `Accept-Encoding`.
 

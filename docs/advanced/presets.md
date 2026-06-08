@@ -55,21 +55,22 @@ Resolve any preset by name with `Presets::get($name)` (a `PortableConfig`), pass
 
 `Presets::VERSION` identifies the bundled rule catalogue and is bumped whenever a preset's rule set changes in a way integrators should review. `Presets::version()` is a convenience accessor for the same value.
 
-To surface "a newer ruleset is available", implement the `PresetUpdateChecker` interface against a source you trust and compare against `Presets::VERSION`:
+Phirewall ships **no** update-check mechanism and performs **no** network I/O. To surface "a newer ruleset is available", compare `Presets::VERSION` against a release feed you trust (Packagist, an internal config service, a versioned JSON document behind HTTPS, and so on) with `version_compare()`:
 
 ```php
-interface PresetUpdateChecker
-{
-    public function latestVersion(string $preset): ?string;
-    public function isOutdated(string $preset, string $currentVersion): bool;
+use Flowd\Phirewall\Preset\Presets;
+
+// $latestFromYourFeed comes from a source YOU control and trust.
+if (version_compare(Presets::VERSION, $latestFromYourFeed, '<')) {
+    // A newer preset catalogue is available; review and upgrade phirewall.
 }
 ```
 
-**Phirewall hardcodes no remote endpoint and performs no network I/O.** The shipped `NullPresetUpdateChecker` never reports an update (`latestVersion()` returns `null`, `isOutdated()` returns `false`). Wiring an actual source — a Packagist release feed, an internal config service, a versioned JSON document behind HTTPS, … — is the integrator's job: implement the interface and inject it where you build your `Config`.
+Fetching `$latestFromYourFeed` is the integrator's job; phirewall hardcodes no remote endpoint.
 
 ## Example
 
-See [`examples/31-presets.php`](https://github.com/flowd/phirewall/blob/main/examples/31-presets.php) for standalone use, inspecting a preset as portable data, composing a preset with a user `Config` (overriding a rule by name), and the version / update-check seam.
+See [`examples/31-presets.php`](https://github.com/flowd/phirewall/blob/main/examples/31-presets.php) for standalone use, inspecting a preset as portable data, composing a preset with a user `Config` (overriding a rule by name), and comparing `Presets::VERSION` against your own release feed with `version_compare()`.
 
 ## Related pages
 

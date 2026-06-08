@@ -76,7 +76,7 @@ $config->throttles->add(
     string $name,
     int|Closure $limit,     // Static int or Closure(ServerRequestInterface): int
     int|Closure $period,    // Static int or Closure(ServerRequestInterface): int
-    Closure $key,           // Closure(ServerRequestInterface): ?string
+    ?Closure $key = null,   // Closure(ServerRequestInterface): ?string
 ): ThrottleSection
 ```
 
@@ -85,7 +85,7 @@ $config->throttles->add(
 | `$name` | `string` | Rule name (appears in headers and events) |
 | `$limit` | `int\|Closure` | Maximum requests in the period. Closure receives the request. |
 | `$period` | `int\|Closure` | Time window in seconds. Closure receives the request. |
-| `$key` | `Closure` | Key extractor. Return `null` to skip this rule for the request. |
+| `$key` | `?Closure` | Key extractor; return `null` to skip this rule. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 
 ## Sliding Window
 
@@ -171,7 +171,7 @@ A request is blocked if it exceeds **any** window's limit. Windows are evaluated
 $config->throttles->multi(
     string $name,
     array $windowLimits,   // array<int period, int limit>
-    Closure $key,
+    ?Closure $key = null,
 ): ThrottleSection
 ```
 
@@ -179,7 +179,7 @@ $config->throttles->multi(
 |-----------|------|-------------|
 | `$name` | `string` | Base name. Sub-rules are named `{name}:{period}s`. |
 | `$windowLimits` | `array<int, int>` | Map of period (seconds) to limit (max requests). Must not be empty. |
-| `$key` | `Closure` | Key extractor, shared across all sub-rules. |
+| `$key` | `?Closure` | Key extractor, shared across all sub-rules. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 
 ### Naming Convention
 

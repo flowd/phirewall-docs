@@ -358,6 +358,7 @@ Verify that failures recorded via `RequestContext` trigger bans:
 
 ```php
 use PHPUnit\Framework\TestCase;
+use Flowd\Phirewall\BanType;
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Context\RequestContext;
 use Flowd\Phirewall\Http\Firewall;
@@ -403,7 +404,7 @@ class RequestContextTest extends TestCase
         }
 
         // Verify the IP is now banned
-        $this->assertTrue($firewall->isBanned('test-rule', $ip));
+        $this->assertTrue($firewall->isBanned('test-rule', $ip, BanType::Fail2Ban));
     }
 }
 ```
