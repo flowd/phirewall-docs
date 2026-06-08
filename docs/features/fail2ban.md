@@ -353,17 +353,12 @@ $config->allow2ban->add(
 Ban API keys that exceed expected usage. Unlike rate limiting (which returns 429 and lets the client retry), Allow2Ban **bans** the key entirely -- a stronger response for abuse:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
-
-// Ban any API key that makes more than 1000 requests in 60 seconds.
-// hashedHeader() stores the sha256 fingerprint instead of the raw key so the
-// ban registry doesn't carry the credential verbatim.
+// Ban any client IP that makes more than 1000 requests in 60 seconds.
 $config->allow2ban->add(
-    name: 'api-key-abuse',
+    name: 'api-volume-abuse',
     threshold: 1000,
     period: 60,
     banSeconds: 300,   // 5 minute ban
-    key: KeyExtractors::hashedHeader('X-Api-Key'),
 );
 ```
 

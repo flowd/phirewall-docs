@@ -922,7 +922,7 @@ $middleware = new Middleware($config);
 
 ## Basic: API Rate Limiting
 
-Tiered rate limits for an API with authenticated and anonymous users.
+Tiered per-client-IP rate limits for an API, with a tighter cap on an expensive endpoint.
 
 ```php
 use Flowd\Phirewall\Config;
@@ -947,21 +947,6 @@ $config->throttles->add('burst',
 $config->throttles->add('global',
     limit: 1000, period: 60,
     key: KeyExtractors::clientIp($proxyResolver)
-);
-
-// Authenticated user limits (higher)
-$config->throttles->add('user',
-    limit: 5000, period: 60,
-    key: KeyExtractors::header('X-User-Id')
-);
-
-// Anonymous limits (lower, skip if authenticated)
-$config->throttles->add('anon',
-    limit: 100, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getHeaderLine('X-User-Id') !== '') return null;
-        return $proxyResolver->resolve($req);
-    }
 );
 
 // Expensive endpoint limit
@@ -1167,7 +1152,6 @@ Allow2Ban is the inverse of Fail2Ban: it counts every request for a key and bans
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 
 $config = new Config(new InMemoryCache());
@@ -1177,15 +1161,6 @@ $config->allow2ban->add('high-volume-ban',
     threshold: 100,
     period: 60,
     banSeconds: 3600,
-);
-
-// Ban by API key for authenticated routes. hashedHeader() stores a sha256
-// fingerprint of the key in the ban registry instead of the raw credential.
-$config->allow2ban->add('api-key-ban',
-    threshold: 1000,
-    period: 60,
-    banSeconds: 300,
-    key: KeyExtractors::hashedHeader('X-Api-Key')
 );
 ```
 

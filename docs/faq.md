@@ -271,8 +271,7 @@ $config->throttles->add('api',
         default => 100,
     },
     period: 60,
-    key: fn($request): ?string => $request->getHeaderLine('X-User-Id')
-        ?: $request->getServerParams()['REMOTE_ADDR'] ?? null,
+    key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
 

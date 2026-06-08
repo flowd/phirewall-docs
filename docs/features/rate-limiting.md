@@ -301,30 +301,7 @@ $config->throttles->add('search-endpoint',
 
 ## Per-User Limits
 
-Differentiate between authenticated and anonymous traffic:
-
-```php
-// Authenticated user limits (higher)
-$config->throttles->add('api-user',
-    limit: 1000, period: 3600,
-    key: KeyExtractors::header('X-User-Id')
-);
-
-// Anonymous limits (lower, keyed by IP)
-$config->throttles->add('api-anon',
-    limit: 100, period: 3600,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getHeaderLine('X-User-Id') !== '') {
-            return null; // Skip authenticated requests
-        }
-        return $proxyResolver->resolve($req);
-    }
-);
-```
-
-::: tip
-Your application's authentication middleware should set headers like `X-User-Id` and `X-Plan` on the request before it reaches the Phirewall middleware. This allows clean separation of concerns.
-:::
+Enforce rate limits at the firewall on the client IP, which a caller cannot forge (behind a proxy, resolve it with `KeyExtractors::clientIp()` and a `TrustedProxyResolver`). Do not key a limit on a client-supplied header such as `X-User-Id` or `X-Api-Key`: a caller can rotate or drop it to land in a fresh counter on every request and never reach the limit. For genuine per-authenticated-user limits, enforce them behind your application's auth layer, where the user identity has been verified, rather than on a raw request header at the edge.
 
 ::: warning Header keys are client-controlled
 A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold — a trivial bypass. Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')` — the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.

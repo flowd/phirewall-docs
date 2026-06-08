@@ -377,15 +377,14 @@ $config->allow2ban->add('volume-ban',
 
 ## API Abuse
 
-### API Key Throttling
+### API Endpoint Throttling
 
-Rate-limit by API key for authenticated endpoints. `hashedHeader()` stores a sha256 fingerprint of the key in the cache backend rather than the raw value:
+Rate-limit API traffic per client IP, the value a caller cannot forge (behind a proxy, resolve it with `KeyExtractors::clientIp()` and a `TrustedProxyResolver`):
 
 ```php
-$config->throttles->add('api-key',
+$config->throttles->add('api',
     limit: 1000,
     period: 60,
-    key: KeyExtractors::hashedHeader('X-Api-Key'),
 );
 ```
 

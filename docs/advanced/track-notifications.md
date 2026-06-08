@@ -73,15 +73,12 @@ $config->tracks->add('login-attempts',
 
 ### Track API Usage by User
 
-Monitor per-user API consumption using a custom header:
+Monitor API consumption per client (keyed on the client IP by default):
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
-
 $config->tracks->add('api-usage',
     period: 3600,
     filter: fn($request) => str_starts_with($request->getUri()->getPath(), '/api/'),
-    key: KeyExtractors::header('X-User-Id'),
 );
 ```
 
