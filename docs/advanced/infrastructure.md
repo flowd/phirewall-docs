@@ -424,13 +424,11 @@ $config->fail2ban->add('login-abuse',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Standard rate limiting
 $config->throttles->add('global',
     limit: 100, period: 60,
-    key: KeyExtractors::ip()
 );
 
 $middleware = new Middleware($config);

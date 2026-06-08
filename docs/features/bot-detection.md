@@ -322,13 +322,11 @@ $config->blocklists->add('scanner-paths', function ($req): bool {
 $config->fail2ban->add('persistent-scanner',
     threshold: 5, period: 60, ban: 86400,
     filter: fn($req) => true,
-    key: KeyExtractors::ip()
 );
 
 // 6. Rate limit everything else
 $config->throttles->add('global',
     limit: 60, period: 60,
-    key: KeyExtractors::ip()
 );
 ```
 

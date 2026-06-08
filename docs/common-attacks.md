@@ -28,14 +28,13 @@ $config = new Config(new RedisCache($redis));
 $config->fail2ban->add('login-failures',
     threshold: 3, period: 300, ban: 3600,
     filter: fn(ServerRequestInterface $req): bool => false,
-    key: KeyExtractors::ip(),
 );
 
 // In your login handler, AFTER checking credentials:
 if (!$this->authenticate($username, $password)) {
     $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-    // As of 0.5.0 the key argument is optional — when omitted, the rule's own
-    // key extractor (here KeyExtractors::ip()) resolves the discriminator.
+    // recordFailure's key is optional; with none, the rule resolves the
+    // discriminator itself (here the client IP).
     $context?->recordFailure('login-failures');
 }
 ```
@@ -63,7 +62,6 @@ $config->fail2ban->add('login-brute-force',
         $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login'
         && $req->getHeaderLine('X-Login-Failed') === '1',
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -317,7 +315,7 @@ Catch both bursts and sustained abuse with multiple time windows:
 $config->throttles->multi('api', [
     1  => 3,    // Burst protection
     60 => 100,  // Sustained limit
-], KeyExtractors::ip());
+]);
 ```
 
 ### Sliding Window
@@ -328,7 +326,6 @@ Prevent the "double burst" problem at fixed-window boundaries:
 $config->throttles->sliding('api',
     limit: 100,
     period: 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -375,7 +372,6 @@ $config->allow2ban->add('volume-ban',
     threshold: 500,
     period: 60,
     banSeconds: 3600,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -423,7 +419,6 @@ Monitor request patterns without blocking, alerting when thresholds are exceeded
 $config->tracks->add('sensitive-endpoints',
     period: 300,
     filter: fn($req): bool => str_starts_with($req->getUri()->getPath(), '/api/admin'),
-    key: KeyExtractors::ip(),
     limit: 50,
 );
 ```
@@ -485,11 +480,10 @@ $config->blocklists->owasp('owasp', $rules);
 $config->fail2ban->add('login-brute-force',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($req): bool => $req->getHeaderLine('X-Login-Failed') === '1',
-    key: KeyExtractors::ip(),
 );
 
 // ── Layer 5: Throttling ───────────────────────────────────────────────
-$config->throttles->multi('api', [1 => 5, 60 => 200], KeyExtractors::ip());
+$config->throttles->multi('api', [1 => 5, 60 => 200]);
 $config->throttles->add('login', limit: 10, period: 60, key: function ($req): ?string {
     return $req->getUri()->getPath() === '/login'
         ? ($req->getServerParams()['REMOTE_ADDR'] ?? null)
@@ -499,7 +493,6 @@ $config->throttles->add('login', limit: 10, period: 60, key: function ($req): ?s
 // ── Layer 6: Allow2Ban ────────────────────────────────────────────────
 $config->allow2ban->add('volume-ban',
     threshold: 500, period: 60, banSeconds: 3600,
-    key: KeyExtractors::ip(),
 );
 
 // ── PSR-17 Responses ──────────────────────────────────────────────────

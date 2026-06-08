@@ -16,7 +16,6 @@ $config->fail2ban->add('login',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($request) => $request->getMethod() === 'POST'
         && $request->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -66,7 +65,6 @@ $config->fail2ban->add('login-failures',
     period: 300,
     ban: 3600,
     filter: fn(ServerRequestInterface $request): bool => false,
-    key: KeyExtractors::ip(),
 );
 
 $middleware = new Middleware($config);
@@ -265,7 +263,6 @@ $config->fail2ban->add('login-failures',
     period: 300,
     ban: 3600,
     filter: fn(ServerRequestInterface $request): bool => false,
-    key: KeyExtractors::ip(),
 );
 
 $middleware = new Middleware($config, new Psr17Factory());
@@ -379,7 +376,6 @@ class RequestContextTest extends TestCase
         $config->fail2ban->add('test-rule',
             threshold: 2, period: 300, ban: 3600,
             filter: fn($request): bool => false,
-            key: KeyExtractors::ip(),
         );
 
         $middleware = new Middleware($config, new Psr17Factory());

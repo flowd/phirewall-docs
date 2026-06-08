@@ -501,7 +501,6 @@ Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is s
     $config->fail2ban->add('persistent-attacker',
         threshold: 5, period: 60, ban: 86400,
         filter: fn($req) => true,
-        key: KeyExtractors::ip()
     );
     ```
 

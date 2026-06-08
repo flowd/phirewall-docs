@@ -19,7 +19,7 @@ For a ready-made per-client API rate limit (burst + sustained, scoped to `/api`)
 :::
 
 ::: tip Default key
-The `key` argument on `add()`, `sliding()`, and `multi()` is optional. When omitted, the throttle keys on the client IP resolved by the Config's IP resolver (set via `Config::setIpResolver(KeyExtractors::clientIp($trustedProxyResolver))` behind a proxy), falling back to `KeyExtractors::ip()` (REMOTE_ADDR) when none is set. The resolver is read per request, so it can be set before or after adding rules. The examples below pass `key:` explicitly to make the keying visible.
+The `key` argument on `add()`, `sliding()`, and `multi()` is optional. When omitted, the throttle keys on the client IP resolved by the Config's IP resolver (set via `Config::setIpResolver(KeyExtractors::clientIp($trustedProxyResolver))` behind a proxy), falling back to `KeyExtractors::ip()` (REMOTE_ADDR) when none is set. The resolver is read per request, so it can be set before or after adding rules. The examples below omit `key:` to use this default; pass an explicit `key:` only to key on something other than the client IP (a header, a username, and so on).
 :::
 
 ## Fixed Window Throttle
@@ -46,7 +46,7 @@ $config->throttles->add(
 use Flowd\Phirewall\KeyExtractors;
 
 // 100 requests per minute per IP
-$config->throttles->add('ip-limit', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->add('ip-limit', limit: 100, period: 60);
 ```
 
 When the key closure returns `null`, the rule is skipped for that request. This lets you apply throttles conditionally -- only to certain paths, methods, or user types.
@@ -81,7 +81,6 @@ $config->throttles->sliding(
     name: 'api-sliding',
     limit: 10,
     period: 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -129,7 +128,7 @@ Each entry creates a sub-rule named `{$name}:{$period}s`. Windows are evaluated 
 $config->throttles->multi('api', [
     1  => 3,    // "api:1s" -- burst protection
     60 => 60,   // "api:60s" -- sustained throughput
-], KeyExtractors::ip());
+]);
 ```
 
 A request is blocked if it exceeds **any** of the windows. This catches both rapid-fire bursts and slow-and-steady abuse.
@@ -142,7 +141,7 @@ $config->throttles->multi('public-api', [
     1   => 5,      // 5 req/s burst
     60  => 200,    // 200 req/min sustained
     3600 => 5000,  // 5000 req/hour daily budget
-], KeyExtractors::ip());
+]);
 
 // Login endpoint with tight controls
 $config->throttles->multi('login', [
@@ -208,7 +207,6 @@ $config->throttles->add(
     100,
     fn(ServerRequestInterface $req): int =>
         (int) date('G') >= 9 && (int) date('G') < 17 ? 30 : 60,
-    KeyExtractors::ip()
 );
 ```
 

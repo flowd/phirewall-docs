@@ -340,7 +340,7 @@ $config->throttledResponseFactory = new Psr17ThrottledResponseFactory(
 $config->blocklists->add('admin',
     fn($req) => str_starts_with($req->getUri()->getPath(), '/admin')
 );
-$config->throttles->add('ip', 100, 60, KeyExtractors::ip());
+$config->throttles->add('ip', 100, 60);
 
 // Create middleware (also pass PSR-17 factory for base responses)
 $middleware = new Middleware($config, $psr17);
@@ -438,7 +438,6 @@ $this->app->singleton(Middleware::class, function ($app) {
     );
     $config->throttles->add('global',
         limit: 100, period: 60,
-        key: KeyExtractors::ip()
     );
 
     return new Middleware($config, $psr17);

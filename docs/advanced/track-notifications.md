@@ -68,7 +68,6 @@ $config->tracks->add('login-attempts',
     period: 3600,
     filter: fn($request) => $request->getMethod() === 'POST'
         && $request->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -96,7 +95,6 @@ use Flowd\Phirewall\KeyExtractors;
 $config->tracks->add('admin-access',
     period: 600,
     filter: fn($request) => str_starts_with($request->getUri()->getPath(), '/admin/'),
-    key: KeyExtractors::ip(),
 );
 ```
 

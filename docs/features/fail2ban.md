@@ -79,7 +79,6 @@ $config->fail2ban->add('login-brute-force',
     ban: 3600,         // 1 hour ban
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -105,7 +104,6 @@ $config->fail2ban->add('credential-stuffing-ip',
     ban: 7200,         // 2 hour ban
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Per-username throttle: 5 attempts per 5 minutes per username
@@ -170,7 +168,6 @@ $config->fail2ban->add('persistent-scanner',
     period: 60,        // in 1 minute
     ban: 86400,        // 24 hour ban
     filter: fn($req) => true,
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -227,7 +224,6 @@ $config->fail2ban->add(
     period: 300,       // 5 minute window
     ban: 3600,         // 1 hour ban
     filter: fn(ServerRequestInterface $req): bool => false,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -349,7 +345,6 @@ $config->allow2ban->add(
     threshold: 100,
     period: 60,
     banSeconds: 3600,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -547,19 +542,16 @@ $config->fail2ban->add('login',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Layer 4: Allow2Ban for volume abuse
 $config->allow2ban->add('volume-abuse',
     threshold: 200, period: 60, banSeconds: 1800,
-    key: KeyExtractors::ip()
 );
 
 // Layer 5: Rate limiting as backstop
 $config->throttles->add('global',
     limit: 100, period: 60,
-    key: KeyExtractors::ip()
 );
 ```
 

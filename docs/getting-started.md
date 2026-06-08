@@ -148,22 +148,21 @@ Throttled requests receive `429 Too Many Requests` with a `Retry-After` header.
 
 ```php
 // 100 requests per minute per IP
-$config->throttles->add('ip-minute', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->add('ip-minute', limit: 100, period: 60);
 
 // Sliding window (prevents double-burst at window boundaries)
-$config->throttles->sliding('api-sliding', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->sliding('api-sliding', limit: 100, period: 60);
 
 // Multi-window (burst + sustained limits in a single call)
 $config->throttles->multi('api', [
     1  => 5,    // 5 req/s burst limit
     60 => 100,  // 100 req/min sustained limit
-], KeyExtractors::ip());
+]);
 
 // Dynamic limits based on request properties
 $config->throttles->add('role-based',
     limit: fn($req) => $req->getHeaderLine('X-Role') === 'admin' ? 1000 : 100,
     period: 60,
-    key: KeyExtractors::ip()
 );
 
 // Enable standard rate limit headers
@@ -184,7 +183,6 @@ $config->fail2ban->add('login-abuse',
     ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -200,7 +198,6 @@ $config->allow2ban->add('high-volume',
     threshold: 1000,
     period: 60,
     banSeconds: 3600,
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -214,14 +211,12 @@ Track rules count requests passively without blocking. Use them for dashboards, 
 $config->tracks->add('login-attempts',
     period: 3600,
     filter: fn($req) => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST',
-    key: KeyExtractors::ip()
 );
 
 // Track with a threshold for alerting
 $config->tracks->add('suspicious-burst',
     period: 60,
     filter: fn($req) => $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip(),
     limit: 10, // TrackHit event includes thresholdReached flag at 10+ hits
 );
 ```
@@ -311,17 +306,14 @@ class PhirewallFactory
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
-            key: KeyExtractors::ip()
         );
 
         // Rate limiting
         $config->throttles->add('burst',
             limit: 30, period: 5,
-            key: KeyExtractors::ip()
         );
         $config->throttles->add('global',
             limit: 1000, period: 60,
-            key: KeyExtractors::ip()
         );
 
         $psr17 = new Psr17Factory();
@@ -472,17 +464,14 @@ class PhirewallServiceProvider extends ServiceProvider
                 filter: fn(ServerRequestInterface $req): bool =>
                     $req->getMethod() === 'POST'
                     && $req->getUri()->getPath() === '/login',
-                key: KeyExtractors::ip()
             );
 
             // Rate limiting
             $config->throttles->add('burst',
                 limit: 30, period: 5,
-                key: KeyExtractors::ip()
             );
             $config->throttles->add('global',
                 limit: 1000, period: 60,
-                key: KeyExtractors::ip()
             );
 
             $psr17 = new Psr17Factory();
@@ -601,17 +590,14 @@ $config->fail2ban->add('login-abuse',
     filter: fn(ServerRequestInterface $req): bool =>
         $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Rate limiting
 $config->throttles->add('burst',
     limit: 30, period: 5,
-    key: KeyExtractors::ip()
 );
 $config->throttles->add('global',
     limit: 1000, period: 60,
-    key: KeyExtractors::ip()
 );
 
 // Add Phirewall LAST (Slim LIFO = executes first)
@@ -674,17 +660,14 @@ class PhirewallMiddlewareFactory
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
-            key: KeyExtractors::ip()
         );
 
         // Rate limiting
         $config->throttles->add('burst',
             limit: 30, period: 5,
-            key: KeyExtractors::ip()
         );
         $config->throttles->add('global',
             limit: 1000, period: 60,
-            key: KeyExtractors::ip()
         );
 
         $psr17 = new Psr17Factory();
@@ -743,7 +726,7 @@ $config->blocklists->add('scanner-probe', fn($req) => str_starts_with($req->getU
 $config->blocklists->knownScanners();
 
 // Rate limit: 10 requests per minute per IP
-$config->throttles->add('ip-limit', limit: 10, period: 60, key: KeyExtractors::ip());
+$config->throttles->add('ip-limit', limit: 10, period: 60);
 
 // Fail2Ban: Ban IPs that POST to /login more than 3 times in 2 minutes
 $config->fail2ban->add('login',
@@ -752,7 +735,6 @@ $config->fail2ban->add('login',
     ban: 300,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // 3. Create middleware

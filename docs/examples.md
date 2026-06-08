@@ -262,8 +262,8 @@ class PhirewallFactory
         $config->blocklists->owasp('owasp', $owaspRules);
 
         // ── Fail2Ban ─────────────────────────────────────────────
-        // KeyExtractors::ip() uses the global resolver set by
-        // setIpResolver() above — no need to repeat clientIp().
+        // No key: these rules default to the client IP from the
+        // global resolver set above.
         $config->fail2ban->add('login-abuse',
             threshold: 5,
             period: 300,
@@ -271,23 +271,19 @@ class PhirewallFactory
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
-            key: KeyExtractors::ip()
         );
 
         // ── Rate Limiting ────────────────────────────────────────
         $config->throttles->add('burst',
             limit: 30, period: 5,
-            key: KeyExtractors::ip()
         );
         $config->throttles->add('global',
             limit: 1000, period: 60,
-            key: KeyExtractors::ip()
         );
 
         // ── Allow2Ban ────────────────────────────────────────────
         $config->allow2ban->add('flood-protection',
             threshold: 500, period: 60, banSeconds: 3600,
-            key: KeyExtractors::ip()
         );
 
         // ── PSR-17 Response Bodies ───────────────────────────────
@@ -486,8 +482,8 @@ class PhirewallServiceProvider extends ServiceProvider
             $config->blocklists->owasp('owasp', $owaspRules);
 
             // ── Fail2Ban ─────────────────────────────────────────
-            // KeyExtractors::ip() uses the global resolver set by
-            // setIpResolver() above — no need to repeat clientIp().
+            // No key: these rules default to the client IP from the
+            // global resolver set above.
             $config->fail2ban->add('login-abuse',
                 threshold: 5,
                 period: 300,
@@ -495,29 +491,24 @@ class PhirewallServiceProvider extends ServiceProvider
                 filter: fn(ServerRequestInterface $req): bool =>
                     $req->getMethod() === 'POST'
                     && $req->getUri()->getPath() === '/login',
-                key: KeyExtractors::ip()
             );
 
             // ── Rate Limiting ────────────────────────────────────
             $config->throttles->add('burst',
                 limit: 30, period: 5,
-                key: KeyExtractors::ip()
             );
             $config->throttles->add('global',
                 limit: 1000, period: 60,
-                key: KeyExtractors::ip()
             );
             $config->throttles->add('api',
                 limit: fn(ServerRequestInterface $req): int =>
                     $req->getHeaderLine('X-Role') === 'admin' ? 5000 : 200,
                 period: 60,
-                key: KeyExtractors::ip()
             );
 
             // ── Allow2Ban ────────────────────────────────────────
             $config->allow2ban->add('flood-protection',
                 threshold: 500, period: 60, banSeconds: 3600,
-                key: KeyExtractors::ip()
             );
 
             // ── PSR-17 Response Bodies ───────────────────────────
@@ -792,8 +783,8 @@ class PhirewallMiddlewareFactory
         $config->blocklists->owasp('owasp', $owaspRules);
 
         // ── Fail2Ban ─────────────────────────────────────────────
-        // KeyExtractors::ip() uses the global resolver set by
-        // setIpResolver() above — no need to repeat clientIp().
+        // No key: these rules default to the client IP from the
+        // global resolver set above.
         $config->fail2ban->add('login-abuse',
             threshold: 5,
             period: 300,
@@ -801,23 +792,19 @@ class PhirewallMiddlewareFactory
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
-            key: KeyExtractors::ip()
         );
 
         // ── Rate Limiting ────────────────────────────────────────
         $config->throttles->add('burst',
             limit: 30, period: 5,
-            key: KeyExtractors::ip()
         );
         $config->throttles->add('global',
             limit: 1000, period: 60,
-            key: KeyExtractors::ip()
         );
 
         // ── Allow2Ban ────────────────────────────────────────────
         $config->allow2ban->add('flood-protection',
             threshold: 500, period: 60, banSeconds: 3600,
-            key: KeyExtractors::ip()
         );
 
         // ── PSR-17 Response Bodies ───────────────────────────────
@@ -935,7 +922,7 @@ final class PhirewallMiddleware implements MiddlewareInterface
                 $req->getUri()->getPath() === '/health'
         );
         $config->blocklists->knownScanners();
-        $config->throttles->add('burst', limit: 30, period: 5, key: KeyExtractors::ip());
+        $config->throttles->add('burst', limit: 30, period: 5);
 
         $config->usePsr17Responses($psr17, $psr17);
 
@@ -1002,7 +989,6 @@ $config->blocklists->knownScanners();
 // Rate limit: 100 requests per minute per IP
 $config->throttles->add('api',
     limit: 100, period: 60,
-    key: KeyExtractors::ip()
 );
 
 $middleware = new Middleware($config);
@@ -1083,7 +1069,6 @@ $config = new Config(new InMemoryCache());
 $config->throttles->sliding('api-sliding',
     limit: 100,
     period: 60,
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -1107,7 +1092,7 @@ $config = new Config(new InMemoryCache());
 $config->throttles->multi('api', [
     1  => 3,   // 3 req/s burst limit
     60 => 60,  // 60 req/min sustained limit
-], KeyExtractors::ip());
+]);
 ```
 
 ---
@@ -1130,7 +1115,6 @@ $config->throttles->add('role-based',
     limit: fn(ServerRequestInterface $req): int =>
         $req->getHeaderLine('X-Role') === 'admin' ? 1000 : 100,
     period: 60,
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -1156,7 +1140,6 @@ $config->tracks->add('login-attempts',
     period: 3600,
     filter: fn($req) => $req->getUri()->getPath() === '/login'
         && $req->getMethod() === 'POST',
-    key: KeyExtractors::ip()
 );
 
 // Track login attempts by username for alerting
@@ -1204,7 +1187,6 @@ $config->fail2ban->add('login-brute-force',
     ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Per-username throttle: 5 attempts per 5 minutes per username
@@ -1240,7 +1222,6 @@ $config->fail2ban->add('login-failures',
     period: 300,
     ban: 3600,
     filter: fn(ServerRequestInterface $req): bool => false,
-    key: KeyExtractors::ip()
 );
 
 // In your login handler:
@@ -1272,7 +1253,6 @@ $config->allow2ban->add('high-volume-ban',
     threshold: 100,
     period: 60,
     banSeconds: 3600,
-    key: KeyExtractors::ip()
 );
 
 // Ban by API key for authenticated routes. hashedHeader() stores a sha256
@@ -1398,14 +1378,12 @@ $config = new Config(new InMemoryCache());
 $config->tracks->add('every-login-attempt',
     period: 60,
     filter: fn($req) => $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Track with threshold: thresholdReached=true at 5+ hits
 $config->tracks->add('suspicious-login-burst',
     period: 60,
     filter: fn($req) => $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip(),
     limit: 5,
 );
 ```
@@ -1429,7 +1407,7 @@ $pdo->exec('PRAGMA journal_mode=WAL');
 $cache = new PdoCache($pdo);
 
 $config = new Config($cache);
-$config->throttles->add('api', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->add('api', limit: 100, period: 60);
 
 // MySQL (shared across multiple app servers)
 // $pdo = new PDO('mysql:host=db.example.com;dbname=myapp', getenv('DB_USER'), getenv('DB_PASSWORD'));
@@ -1762,11 +1740,10 @@ $dispatcher = new class ($logger) implements EventDispatcherInterface {
 };
 
 $config = new Config(new RedisCache($redis), $dispatcher);
-$config->throttles->add('api', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->add('api', limit: 100, period: 60);
 $config->fail2ban->add('login', threshold: 5, period: 300, ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -1808,12 +1785,10 @@ $config->blocklists->ip('known-bad', ['198.51.100.0/24', '203.0.113.0/24']);
 $config->fail2ban->add('persistent-scanner',
     threshold: 10, period: 60, ban: 86400,
     filter: fn($req) => true,
-    key: KeyExtractors::ip()
 );
 
 // Global rate limit as backstop
 $config->throttles->add('global',
     limit: 100, period: 60,
-    key: KeyExtractors::ip()
 );
 ```

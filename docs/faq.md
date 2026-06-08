@@ -85,7 +85,7 @@ $proxy = new TrustedProxyResolver([
     '192.168.0.0/16',  // Private ranges
 ]);
 
-// Apply globally to all rules that use KeyExtractors::ip()
+// Default client-IP resolution for every rule added without an explicit key
 $config->setIpResolver(KeyExtractors::clientIp($proxy));
 ```
 
@@ -233,7 +233,7 @@ See [Dynamic Throttle](/advanced/dynamic-throttle) for details.
 Use sliding window throttling:
 
 ```php
-$config->throttles->sliding('api', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->sliding('api', limit: 100, period: 60);
 ```
 
 Or combine multiple fixed windows with `multi()`:
@@ -242,7 +242,7 @@ Or combine multiple fixed windows with `multi()`:
 $config->throttles->multi('api', [
     1  => 3,    // 3 req/s burst protection
     60 => 100,  // 100 req/min sustained limit
-], KeyExtractors::ip());
+]);
 ```
 
 ### What happens when a throttle key returns `null`?
@@ -377,7 +377,6 @@ The optional `limit` parameter adds a threshold to your track rule. When set, th
 $config->tracks->add('suspicious-burst',
     period: 60,
     filter: fn($request) => $request->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip(),
     limit: 10, // thresholdReached=true at 10+ hits
 );
 ```

@@ -30,7 +30,6 @@ $config->throttles->add('role-based',
     limit: fn(ServerRequestInterface $request): int =>
         $request->getHeaderLine('X-Role') === 'admin' ? 1000 : 100,
     period: 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -46,7 +45,6 @@ $config->throttles->add('endpoint-adaptive',
     limit: 100,
     period: fn(ServerRequestInterface $request): int =>
         str_starts_with($request->getUri()->getPath(), '/api/export') ? 3600 : 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -65,7 +63,6 @@ $config->throttles->add('fully-dynamic',
         $request->getHeaderLine('X-Plan') === 'enterprise' ? 10000 : 100,
     period: fn(ServerRequestInterface $request): int =>
         $request->getHeaderLine('X-Plan') === 'enterprise' ? 3600 : 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -130,7 +127,6 @@ As time progresses within the current window, the previous window's contribution
 $config->throttles->sliding('api-sliding',
     limit: 100,
     period: 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -160,7 +156,7 @@ Register multiple time windows under a single logical name with `multi()`. This 
 $config->throttles->multi('api', [
     1  => 3,    // 3 requests per second (burst protection)
     60 => 100,  // 100 requests per minute (sustained limit)
-], KeyExtractors::ip());
+]);
 ```
 
 A request is blocked if it exceeds **any** window's limit. Windows are evaluated from shortest to longest period.
@@ -186,7 +182,7 @@ $config->throttles->multi(
 Sub-rules follow the pattern `{name}:{period}s`:
 
 ```php
-$config->throttles->multi('api', [1 => 5, 60 => 100, 3600 => 2000], KeyExtractors::ip());
+$config->throttles->multi('api', [1 => 5, 60 => 100, 3600 => 2000]);
 
 // Creates three rules:
 // - "api:1s"    -> 5 req/s
@@ -205,7 +201,7 @@ $config->throttles->multi('public-api', [
     1    => 10,     // 10 req/s burst cap
     60   => 300,    // 300 req/min sustained
     3600 => 5000,   // 5000 req/hour daily budget
-], KeyExtractors::ip());
+]);
 ```
 
 ## Per-User Tier Limits
