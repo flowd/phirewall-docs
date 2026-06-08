@@ -32,10 +32,13 @@ features:
     details: Ban clients after threshold violations. Signal failures from your application handler via RequestContext.
   - icon: "\uD83E\uDDE9"
     title: Presets & Portable Config
-    details: Ship ready-made rule bundles (API rate limiting, login protection, scanner blocking, sensitive-path blocking) as serializable PortableConfig data. Layer them with Config::combine() and Config::compose(), and override any rule by name.
+    details: Ready-made, serializable rule bundles you can layer, compose, and override by name.
   - icon: "\uD83D\uDCE6"
     title: PSR-15 Compatible
     details: Works with any PSR-15 framework — Laravel, Symfony, Slim, TYPO3, Mezzio, and more.
+  - icon: "💾"
+    title: Flexible Storage
+    details: "PSR-16 cache backends included: in-memory, APCu, Redis, and PDO."
 ---
 
 <div class="services-home">
