@@ -156,9 +156,10 @@ $config->throttles->multi('api', [
     60 => 100,  // 100 req/min sustained limit
 ]);
 
-// Dynamic limits based on request properties
+// Dynamic limit from a request attribute your auth middleware sets server-side
+// ($req->withAttribute('role', ...)), never a forgeable header
 $config->throttles->add('role-based',
-    limit: fn($req) => $req->getHeaderLine('X-Role') === 'admin' ? 1000 : 100,
+    limit: fn($req) => $req->getAttribute('role') === 'admin' ? 1000 : 100,
     period: 60,
 );
 

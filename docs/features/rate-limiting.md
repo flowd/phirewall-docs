@@ -171,16 +171,18 @@ $config->throttles->add(
 ```php
 use Psr\Http\Message\ServerRequestInterface;
 
-// Single rule handles all plans; no need for separate rules per tier
+// `plan` and `userId` are request attributes set by your auth middleware
+// (e.g. $req->withAttribute('plan', ...)), not client headers a caller could forge.
+// A single rule handles all plans; no need for separate rules per tier.
 $config->throttles->add(
     'api',
-    fn(ServerRequestInterface $req): int => match ($req->getHeaderLine('X-Plan')) {
+    fn(ServerRequestInterface $req): int => match ($req->getAttribute('plan')) {
         'enterprise' => 10000,
         'pro'        => 1000,
         default      => 100,
     },
     60,
-    fn(ServerRequestInterface $req): ?string => $req->getHeaderLine('X-User-Id') ?: null
+    fn(ServerRequestInterface $req): ?string => $req->getAttribute('userId')
 );
 ```
 
@@ -191,7 +193,7 @@ $config->throttles->add(
 $config->throttles->add(
     'role-based',
     fn(ServerRequestInterface $req): int =>
-        $req->getHeaderLine('X-Role') === 'admin' ? 100 : 5,
+        $req->getAttribute('role') === 'admin' ? 100 : 5,
     60,
     fn(ServerRequestInterface $req): string =>
         $req->getServerParams()['REMOTE_ADDR'] ?? '127.0.0.1'

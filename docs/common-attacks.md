@@ -67,7 +67,7 @@ $config->fail2ban->add('login-brute-force',
 The `X-Login-Failed` **request** header must be set by a trusted upstream component **before** Phirewall evaluates the request, not by the login handler, which runs *after* the firewall and can only set response headers the pre-handler filter never sees.
 
 ::: warning
-Trust the `X-Login-Failed` marker only if an upstream component your application controls sets it, and strip any inbound copy of that header at the edge, so a client cannot forge it. When in doubt, prefer the post-handler `RequestContext` approach above.
+Trust the `X-Login-Failed` marker only if an upstream component your application controls sets it, and strip any inbound copy of that header at the edge, so a client cannot forge it. If that component is a PSR-15 middleware in the same application, set a request attribute (`$request->withAttribute('loginFailed', true)`) instead of a header, which a client cannot forge at all; a header is only necessary when the marker comes from a separate upstream service. When in doubt, prefer the post-handler `RequestContext` approach above.
 :::
 
 ### Login Endpoint Throttle
@@ -338,7 +338,7 @@ Apply different limits based on subscription tier:
 
 ```php
 $config->throttles->add('api',
-    limit: fn(ServerRequestInterface $req): int => match ($req->getHeaderLine('X-Plan')) {
+    limit: fn(ServerRequestInterface $req): int => match ($req->getAttribute('plan')) {
         'enterprise' => 10000,
         'pro' => 1000,
         'free' => 100,
@@ -346,12 +346,12 @@ $config->throttles->add('api',
     },
     period: 60,
     key: fn($req): ?string =>
-        $req->getHeaderLine('X-User-Id') ?: $req->getServerParams()['REMOTE_ADDR'] ?? null,
+        $req->getAttribute('userId') ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null),
 );
 ```
 
-::: warning Tier and identity headers must come from your auth layer
-`X-Plan` and `X-User-Id` are read straight from the request here. A client can send `X-Plan: enterprise` to self-grant the highest limit, or rotate `X-User-Id` to dodge a per-user limit. Set these headers in your authentication layer **after** it verifies the principal, and strip or overwrite any inbound copy at the trusted edge (see the **Header keys are client-controlled** warning later on this page).
+::: tip Read tier and identity from request attributes, not headers
+`plan` and `userId` are PSR-7 request **attributes** that your authentication layer sets after verifying the principal: `$request = $request->withAttribute('plan', $user->plan)`. Attributes are server-side only and never part of the incoming request, so a client cannot forge them the way it could an `X-Plan` header. Place the middleware that sets them before Phirewall in the pipeline.
 :::
 
 ### Write Operation Limits
@@ -409,8 +409,8 @@ $config->throttles->add('export',
     period: 3600,
     key: function (ServerRequestInterface $req): ?string {
         if (str_starts_with($req->getUri()->getPath(), '/api/export')) {
-            return $req->getHeaderLine('X-User-Id')
-                ?: $req->getServerParams()['REMOTE_ADDR'] ?? null;
+            return $req->getAttribute('userId')
+                ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null);
         }
         return null;
     },

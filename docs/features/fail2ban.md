@@ -140,23 +140,19 @@ This three-layer strategy defends against different attack speeds:
 
 ### API Signature Abuse
 
-Ban clients sending invalid API signatures. A middleware running before Phirewall validates signatures and marks the request:
+Ban clients sending invalid API signatures. A middleware running before Phirewall validates the signature and records the outcome and the verified client id on the request as attributes:
 
 ```php
-// The Fail2Ban rule reads the header set by the prior middleware
+// The Fail2Ban rule reads the attributes the prior middleware set
 $config->fail2ban->add('api-abuse',
     threshold: 3,
     period: 120,       // 2 minute window
     ban: 900,          // 15 minute ban
-    filter: fn($req) => $req->getHeaderLine('X-Signature-Invalid') === '1',
-    key: function ($req): ?string {
-        // Hash the key so the raw secret never reaches the counter, ban
-        // registry, or event payloads; fall back to the client IP when absent.
-        $apiKey = $req->getHeaderLine('X-API-Key');
-        return $apiKey !== ''
-            ? 'key:' . hash('sha256', $apiKey)
-            : ($req->getServerParams()['REMOTE_ADDR'] ?? null);
-    }
+    filter: fn($req) => $req->getAttribute('apiSignatureValid') === false,
+    // Key on the verified client id (an internal identifier, not the raw API
+    // secret), falling back to the client IP when the request is unauthenticated.
+    key: fn($req): ?string =>
+        $req->getAttribute('apiClientId') ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null),
 );
 ```
 

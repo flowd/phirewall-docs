@@ -25,10 +25,13 @@ use Psr\Http\Message\ServerRequestInterface;
 $config = new Config(new InMemoryCache());
 $config->enableRateLimitHeaders();
 
+// `role` is a PSR-7 request attribute your auth middleware sets before Phirewall
+// runs (e.g. $request->withAttribute('role', $user->role)). Attributes are
+// server-side only, so a client cannot forge them the way it could a header.
 // Admins get 1000 req/min, regular users get 100 req/min
 $config->throttles->add('role-based',
     limit: fn(ServerRequestInterface $request): int =>
-        $request->getHeaderLine('X-Role') === 'admin' ? 1000 : 100,
+        $request->getAttribute('role') === 'admin' ? 1000 : 100,
     period: 60,
 );
 ```
@@ -60,9 +63,9 @@ You can make both the limit and the period dynamic:
 // Enterprise users: 10,000 req/hour. Everyone else: 100 req/min.
 $config->throttles->add('fully-dynamic',
     limit: fn(ServerRequestInterface $request): int =>
-        $request->getHeaderLine('X-Plan') === 'enterprise' ? 10000 : 100,
+        $request->getAttribute('plan') === 'enterprise' ? 10000 : 100,
     period: fn(ServerRequestInterface $request): int =>
-        $request->getHeaderLine('X-Plan') === 'enterprise' ? 3600 : 60,
+        $request->getAttribute('plan') === 'enterprise' ? 3600 : 60,
 );
 ```
 
@@ -214,7 +217,7 @@ Use a single rule with a dynamic limit. This is simpler and requires less config
 
 ```php
 $config->throttles->add('api',
-    limit: fn(ServerRequestInterface $request): int => match ($request->getHeaderLine('X-Plan')) {
+    limit: fn(ServerRequestInterface $request): int => match ($request->getAttribute('plan')) {
         'enterprise' => 10000,
         'pro' => 1000,
         'free' => 100,
@@ -234,8 +237,8 @@ Create separate rules and use the key closure returning `null` to skip:
 $config->throttles->add('free-tier',
     limit: 100, period: 60,
     key: function ($request): ?string {
-        if ($request->getHeaderLine('X-Plan') !== 'free') return null;
-        return $request->getHeaderLine('X-User-Id') ?: null;
+        if ($request->getAttribute('plan') !== 'free') return null;
+        return $request->getAttribute('userId');
     },
 );
 
@@ -243,8 +246,8 @@ $config->throttles->add('free-tier',
 $config->throttles->add('pro-tier',
     limit: 1000, period: 60,
     key: function ($request): ?string {
-        if ($request->getHeaderLine('X-Plan') !== 'pro') return null;
-        return $request->getHeaderLine('X-User-Id') ?: null;
+        if ($request->getAttribute('plan') !== 'pro') return null;
+        return $request->getAttribute('userId');
     },
 );
 
@@ -252,14 +255,14 @@ $config->throttles->add('pro-tier',
 $config->throttles->add('anonymous',
     limit: 50, period: 60,
     key: function ($request): ?string {
-        if ($request->getHeaderLine('X-User-Id') !== '') return null;
+        if ($request->getAttribute('userId') !== null) return null;
         return $request->getServerParams()['REMOTE_ADDR'] ?? null;
     },
 );
 ```
 
-::: warning Tier and identity headers must come from your auth layer
-`X-User-Id` and `X-Plan` are read straight from the request. A client can send `X-Plan: enterprise` to self-grant the highest limit, or rotate `X-User-Id` to dodge a per-user limit. Set these headers in your authentication middleware **after** it has verified the principal and before the request reaches Phirewall, and strip or overwrite any inbound copy at the trusted edge. Looking the tier up from a verified identity, rather than trusting a request header, avoids this entirely.
+::: tip Read tier and identity from request attributes, not headers
+`plan` and `userId` here are PSR-7 request **attributes**, set by your authentication middleware after it verifies the principal: `$request = $request->withAttribute('plan', $user->plan)`. Attributes live only on the server-side request object and are never part of the incoming HTTP message, so a client cannot forge them the way it could an `X-Plan` header. Place that middleware before Phirewall in the pipeline (Phirewall still runs after your error handler). Only fall back to a header if a separate upstream service sets it, and then strip or overwrite any inbound copy at the trusted edge.
 :::
 
 ## Per-Endpoint Cost
@@ -290,8 +293,8 @@ $config->throttles->add('export-endpoints',
     limit: 10, period: 3600,
     key: function ($request): ?string {
         if (!str_starts_with($request->getUri()->getPath(), '/api/export')) return null;
-        return $request->getHeaderLine('X-User-Id')
-            ?: $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        return $request->getAttribute('userId')
+            ?? ($request->getServerParams()['REMOTE_ADDR'] ?? null);
     },
 );
 ```
@@ -309,7 +312,7 @@ $config->throttles->add('api-limit',
         if (str_starts_with($ip, '10.')) return null;
 
         // Skip for admin users
-        if ($request->getHeaderLine('X-Role') === 'admin') return null;
+        if ($request->getAttribute('role') === 'admin') return null;
 
         // Skip for webhooks
         if (str_starts_with($request->getUri()->getPath(), '/webhooks/')) return null;
@@ -334,7 +337,7 @@ $tierMap = array_column($userTiers, 'plan', 'user_id');
 
 $config->throttles->add('db-tiered',
     limit: fn(ServerRequestInterface $request) use ($tierMap): int =>
-        match ($tierMap[$request->getHeaderLine('X-User-Id')] ?? 'anonymous') {
+        match ($tierMap[$request->getAttribute('userId') ?? ''] ?? 'anonymous') {
             'enterprise' => 10000,
             'pro' => 1000,
             'free' => 100,

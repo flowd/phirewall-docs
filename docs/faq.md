@@ -238,7 +238,7 @@ Yes. Use a dynamic `limit` closure:
 
 ```php
 $config->throttles->add('api',
-    limit: fn($request): int => match ($request->getHeaderLine('X-Plan')) {
+    limit: fn($request): int => match ($request->getAttribute('plan')) {
         'enterprise' => 10000,
         'pro' => 1000,
         default => 100,
@@ -248,7 +248,7 @@ $config->throttles->add('api',
 );
 ```
 
-Set `X-Plan` in your authentication layer after verifying the principal, and strip any inbound copy at the edge; otherwise a client can send `X-Plan: enterprise` to grant itself the top limit.
+`plan` is a PSR-7 request **attribute** your authentication middleware sets after verifying the principal (`$request->withAttribute('plan', ...)`), not a client header a caller could forge. Place that middleware before Phirewall in the pipeline.
 
 See [Dynamic Throttle: Per-User Tier Limits](/advanced/dynamic-throttle#per-user-tier-limits) for more patterns.
 

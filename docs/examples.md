@@ -522,9 +522,11 @@ class PhirewallServiceProvider extends ServiceProvider
             $config->throttles->add('global',
                 limit: 1000, period: 60,
             );
+            // `role` is a request attribute; set it on the PSR request in the bridge
+            // from Laravel's authenticated user (e.g. ->withAttribute('role', $request->user()?->role)).
             $config->throttles->add('api',
                 limit: fn(ServerRequestInterface $req): int =>
-                    $req->getHeaderLine('X-Role') === 'admin' ? 5000 : 200,
+                    $req->getAttribute('role') === 'admin' ? 5000 : 200,
                 period: 60,
             );
 
@@ -1051,10 +1053,12 @@ use Psr\Http\Message\ServerRequestInterface;
 $config = new Config(new InMemoryCache());
 $config->enableRateLimitHeaders();
 
+// `role` is a request attribute set by an upstream auth middleware
+// ($req->withAttribute('role', ...)), not a forgeable client header.
 // Dynamic limit: admins get 1000 req/min, regular users get 100 req/min
 $config->throttles->add('role-based',
     limit: fn(ServerRequestInterface $req): int =>
-        $req->getHeaderLine('X-Role') === 'admin' ? 1000 : 100,
+        $req->getAttribute('role') === 'admin' ? 1000 : 100,
     period: 60,
 );
 ```
