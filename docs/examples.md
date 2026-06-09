@@ -8,7 +8,7 @@ Complete, copy-pasteable configurations for common scenarios. Each example is se
 
 ## Running the Built-in Examples
 
-The Phirewall repository includes 27 runnable examples:
+The Phirewall repository includes 31 runnable examples:
 
 ```bash
 git clone https://github.com/flowd/phirewall
@@ -46,16 +46,20 @@ php examples/01-basic-setup.php
 | 25 | [track-threshold](https://github.com/flowd/phirewall/blob/main/examples/25-track-threshold.php) | Track with threshold for alerting |
 | 26 | [psr17-factories](https://github.com/flowd/phirewall/blob/main/examples/26-psr17-factories.php) | PSR-17 response factory integration |
 | 27 | [request-context](https://github.com/flowd/phirewall/blob/main/examples/27-request-context.php) | Post-handler fail2ban signaling |
+| 28 | [portable-config-signing](https://github.com/flowd/phirewall/blob/main/examples/28-portable-config-signing.php) | Signed PortableConfig transport (HMAC-SHA256) |
+| 29 | [portable-config](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) | PortableConfig as a first-class transport with database-backed rules |
+| 30 | [config-composition](https://github.com/flowd/phirewall/blob/main/examples/30-config-composition.php) | Layering configs (vendor → environment → tenant → deployment) |
+| 31 | [presets](https://github.com/flowd/phirewall/blob/main/examples/31-presets.php) | Ready-to-use rule presets and version comparison (compare `Presets::VERSION` against your own release feed) |
 
 ---
 
 ## Framework Integration
 
-Production-ready integration examples for popular PHP frameworks. Each example includes storage, safelists, blocklists, rate limiting, brute-force protection, OWASP rules, and observability -- copy, paste, adapt.
+Production-ready integration examples for popular PHP frameworks. Each example includes storage, safelists, blocklists, rate limiting, brute-force protection, OWASP rules, and observability. Copy, paste, adapt.
 
 ### PSR-15 (Generic / Plain PHP)
 
-Works with any PSR-15 compatible stack (Mezzio, custom dispatchers, etc.). Requires `nyholm/psr7`.
+Works with any PSR-15 compatible stack (custom dispatchers, runtimes, etc.; Mezzio has its own section below). Requires `nyholm/psr7`.
 
 ```php
 <?php
@@ -179,7 +183,15 @@ echo 'Status: ' . $response->getStatusCode() . "\n";
 
 ### Symfony
 
-Requires `symfony/psr-http-message-bridge` and `nyholm/psr7`. Phirewall runs as a PSR-15 middleware wrapped by Symfony's PSR bridge.
+Requires `symfony/psr-http-message-bridge` and `nyholm/psr7`. Phirewall runs as a PSR-15 middleware wrapped by Symfony's PSR bridge; the bridge factories (`HttpMessageFactoryInterface`, `HttpFoundationFactoryInterface`) and the `nyholm/psr7` PSR-17 factory then autowire into the listener below.
+
+```bash
+composer require symfony/psr-http-message-bridge nyholm/psr7
+```
+
+::: warning
+This bridge runs Phirewall with a pass-through handler, so the `RequestContext` attribute it attaches for app-recorded fail2ban/allow2ban signals lives on the throwaway PSR request and is not visible to your Symfony controllers. Use the pre-handler rule filters for blocking; post-handler `recordFailure()`/`recordHit()` from a controller is not propagated by this basic bridge.
+:::
 
 **`src/Factory/PhirewallFactory.php`**
 
@@ -220,8 +232,11 @@ class PhirewallFactory
         $config->setFailOpen(true);
 
         // ── Trusted Proxies ──────────────────────────────────────
-        if ($this->trustedProxies !== []) {
-            $proxyResolver = new TrustedProxyResolver($this->trustedProxies);
+        // Drop empty entries so an unset/blank env var disables the
+        // resolver instead of registering an empty proxy list.
+        $trustedProxies = array_values(array_filter($this->trustedProxies));
+        if ($trustedProxies !== []) {
+            $proxyResolver = new TrustedProxyResolver($trustedProxies);
             $config->setIpResolver(
                 KeyExtractors::clientIp($proxyResolver)
             );
@@ -251,8 +266,8 @@ class PhirewallFactory
         $config->blocklists->owasp('owasp', $owaspRules);
 
         // ── Fail2Ban ─────────────────────────────────────────────
-        // KeyExtractors::ip() uses the global resolver set by
-        // setIpResolver() above — no need to repeat clientIp().
+        // No key: these rules default to the client IP from the
+        // global resolver set above.
         $config->fail2ban->add('login-abuse',
             threshold: 5,
             period: 300,
@@ -260,23 +275,19 @@ class PhirewallFactory
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
-            key: KeyExtractors::ip()
         );
 
         // ── Rate Limiting ────────────────────────────────────────
         $config->throttles->add('burst',
             limit: 30, period: 5,
-            key: KeyExtractors::ip()
         );
         $config->throttles->add('global',
             limit: 1000, period: 60,
-            key: KeyExtractors::ip()
         );
 
         // ── Allow2Ban ────────────────────────────────────────────
         $config->allow2ban->add('flood-protection',
             threshold: 500, period: 60, banSeconds: 3600,
-            key: KeyExtractors::ip()
         );
 
         // ── PSR-17 Response Bodies ───────────────────────────────
@@ -291,79 +302,105 @@ class PhirewallFactory
 **`config/services.yaml`**
 
 ```yaml
+# Add these under the `services:` key in Symfony's default config/services.yaml.
+# Keep the stock `_defaults: { autowire: true, autoconfigure: true }` and `App\:`
+# resource block: `autoconfigure` is what turns the #[AsEventListener] below into a
+# registered listener, and the `App\` loader registers the factory and listener as
+# services. Drop them and the listener never runs, so Phirewall silently does nothing.
 services:
     App\Factory\PhirewallFactory:
         arguments:
-            $trustedProxies: ['10.0.0.0/8', '172.16.0.0/12']
+            $trustedProxies: '%env(csv:PHIREWALL_TRUSTED_PROXIES)%'
 
     Flowd\Phirewall\Middleware:
         factory: ['@App\Factory\PhirewallFactory', 'create']
 ```
 
-**`src/EventSubscriber/PhirewallSubscriber.php`**
+Define `PHIREWALL_TRUSTED_PROXIES` in your environment even if empty: an undefined `%env()%` reference fails container compilation, whereas an empty value cleanly disables proxy resolution (the factory's `array_filter` drops it).
+
+```dotenv
+# .env  (empty disables Phirewall's proxy resolution)
+PHIREWALL_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
+```
+
+The listener below auto-registers via `#[AsEventListener]` + autoconfigure; no manual `tags:` entry needed.
+
+**`src/EventListener/PhirewallListener.php`**
+
+A two-phase listener: it runs Phirewall on `kernel.request` (blocking early when a rule fires) and re-attaches the `X-RateLimit-*` headers Phirewall adds on the allowed path during `kernel.response`. A single-phase subscriber that only acts when the status is non-200 would silently drop those headers.
 
 ```php
 <?php
 
 declare(strict_types=1);
 
-namespace App\EventSubscriber;
+namespace App\EventListener;
 
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
-use Nyholm\Psr7\Factory\Psr17Factory;
-use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
-use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
-use Symfony\Component\EventDispatcher\EventSubscriberInterface;
+use Psr\Http\Message\ResponseFactoryInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Symfony\Bridge\PsrHttpMessage\HttpFoundationFactoryInterface;
+use Symfony\Bridge\PsrHttpMessage\HttpMessageFactoryInterface;
+use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
+use Symfony\Component\HttpKernel\Event\ResponseEvent;
 use Symfony\Component\HttpKernel\KernelEvents;
 
-class PhirewallSubscriber implements EventSubscriberInterface
+final class PhirewallListener
 {
+    private const HEADERS_ATTRIBUTE = '_phirewall_headers';
+
     public function __construct(
         private readonly PhirewallMiddleware $middleware,
+        private readonly HttpMessageFactoryInterface $psrHttpFactory,
+        private readonly HttpFoundationFactoryInterface $httpFoundationFactory,
+        private readonly ResponseFactoryInterface $responseFactory,
     ) {}
 
-    public static function getSubscribedEvents(): array
-    {
-        // Run as early as possible (high priority)
-        return [KernelEvents::REQUEST => ['onKernelRequest', 256]];
-    }
-
+    #[AsEventListener(event: KernelEvents::REQUEST, priority: 256)]
     public function onKernelRequest(RequestEvent $event): void
     {
         if (!$event->isMainRequest()) {
             return;
         }
-
-        $psr17 = new Psr17Factory();
-        $psrFactory = new PsrHttpFactory($psr17, $psr17, $psr17, $psr17);
-        $httpFoundationFactory = new HttpFoundationFactory();
-
-        // Convert Symfony request to PSR-7
-        $psrRequest = $psrFactory->createRequest($event->getRequest());
-
-        // Run Phirewall as a pass-through handler
-        $psrResponse = $this->middleware->process(
-            $psrRequest,
-            new class ($psr17) implements \Psr\Http\Server\RequestHandlerInterface {
-                public function __construct(private readonly Psr17Factory $factory) {}
-
-                public function handle(
-                    \Psr\Http\Message\ServerRequestInterface $request,
-                ): \Psr\Http\Message\ResponseInterface {
-                    // Return 200 -- Symfony continues processing
-                    return $this->factory->createResponse(200);
-                }
+        $psrRequest = $this->psrHttpFactory->createRequest($event->getRequest());
+        $probe = new class ($this->responseFactory) implements RequestHandlerInterface {
+            private bool $invoked = false;
+            public function __construct(private readonly ResponseFactoryInterface $responseFactory) {}
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                $this->invoked = true;
+                return $this->responseFactory->createResponse(200);
             }
-        );
-
-        // If Phirewall blocked the request, short-circuit
-        if ($psrResponse->getStatusCode() !== 200) {
-            $event->setResponse(
-                $httpFoundationFactory->createResponse($psrResponse)
-            );
+            public function wasInvoked(): bool { return $this->invoked; }
+        };
+        $psrResponse = $this->middleware->process($psrRequest, $probe);
+        if (!$probe->wasInvoked()) {
+            // The handler never ran: Phirewall produced a block/throttle response.
+            $event->setResponse($this->httpFoundationFactory->createResponse($psrResponse));
+            return;
+        }
+        // Allowed: carry Phirewall's rate-limit headers onto the real response.
+        if ($psrResponse->getHeaders() !== []) {
+            $event->getRequest()->attributes->set(self::HEADERS_ATTRIBUTE, $psrResponse->getHeaders());
         }
     }
+
+    #[AsEventListener(event: KernelEvents::RESPONSE)]
+    public function onKernelResponse(ResponseEvent $event): void
+    {
+        if (!$event->isMainRequest()) {
+            return;
+        }
+        /** @var array<string, list<string>> $headers */
+        $headers = $event->getRequest()->attributes->get(self::HEADERS_ATTRIBUTE, []);
+        foreach ($headers as $name => $values) {
+            $event->getResponse()->headers->set($name, $values);
+        }
+    }
+
 }
 ```
 
@@ -371,7 +408,15 @@ class PhirewallSubscriber implements EventSubscriberInterface
 
 ### Laravel
 
-Requires `nyholm/psr7`. Register the service provider and add the middleware to your HTTP kernel.
+`Flowd\Phirewall\Middleware` is a PSR-15 middleware (`process(...)`), **not** a Laravel middleware (`handle($request, $next)`); registering the class directly throws. A thin bridge middleware adapts it. Install the bridge:
+
+```bash
+composer require symfony/psr-http-message-bridge nyholm/psr7
+```
+
+::: warning
+This bridge runs Phirewall with a probe handler, so the `RequestContext` attribute it attaches for app-recorded fail2ban/allow2ban signals lives on the throwaway PSR request and is not visible to your Laravel controllers. Use the pre-handler rule filters for blocking; post-handler `recordFailure()`/`recordHit()` from a controller is not propagated by this basic bridge.
+:::
 
 **`app/Providers/PhirewallServiceProvider.php`**
 
@@ -391,11 +436,21 @@ use Flowd\Phirewall\Store\ApcuCache;
 use Illuminate\Support\ServiceProvider;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Message\ServerRequestInterface;
+use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
 
 class PhirewallServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        // PSR-7/PSR-17 bridge factories used by the Phirewall middleware.
+        // HttpFoundationFactory has a no-arg constructor, so Laravel
+        // autowires it without an explicit binding.
+        $this->app->singleton(Psr17Factory::class);
+        $this->app->singleton(PsrHttpFactory::class, fn ($app) => new PsrHttpFactory(
+            $app->make(Psr17Factory::class), $app->make(Psr17Factory::class),
+            $app->make(Psr17Factory::class), $app->make(Psr17Factory::class),
+        ));
+
         $this->app->singleton(PhirewallMiddleware::class, function () {
             // ── Storage ──────────────────────────────────────────
             // ApcuCache requires ext-apcu (zero config, single-server)
@@ -409,8 +464,12 @@ class PhirewallServiceProvider extends ServiceProvider
             $config->setFailOpen(true);
 
             // ── Trusted Proxies ──────────────────────────────────
-            $trustedProxies = config('trustedproxy.proxies', []);
-            if (is_array($trustedProxies) && $trustedProxies !== []) {
+            // Phirewall resolves the client IP from its OWN trusted-proxy list,
+            // independent of Laravel's TrustProxies middleware. List your load
+            // balancer / CDN ranges here (e.g. via a TRUSTED_PROXIES env var).
+            // Leave empty only for a direct-to-PHP deployment.
+            $trustedProxies = array_filter(explode(',', (string) env('TRUSTED_PROXIES', '')));
+            if ($trustedProxies !== []) {
                 $proxyResolver = new TrustedProxyResolver($trustedProxies);
                 $config->setIpResolver(
                     KeyExtractors::clientIp($proxyResolver)
@@ -445,8 +504,8 @@ class PhirewallServiceProvider extends ServiceProvider
             $config->blocklists->owasp('owasp', $owaspRules);
 
             // ── Fail2Ban ─────────────────────────────────────────
-            // KeyExtractors::ip() uses the global resolver set by
-            // setIpResolver() above — no need to repeat clientIp().
+            // No key: these rules default to the client IP from the
+            // global resolver set above.
             $config->fail2ban->add('login-abuse',
                 threshold: 5,
                 period: 300,
@@ -454,32 +513,31 @@ class PhirewallServiceProvider extends ServiceProvider
                 filter: fn(ServerRequestInterface $req): bool =>
                     $req->getMethod() === 'POST'
                     && $req->getUri()->getPath() === '/login',
-                key: KeyExtractors::ip()
             );
 
             // ── Rate Limiting ────────────────────────────────────
             $config->throttles->add('burst',
                 limit: 30, period: 5,
-                key: KeyExtractors::ip()
             );
             $config->throttles->add('global',
                 limit: 1000, period: 60,
-                key: KeyExtractors::ip()
             );
+            // `role` is a request attribute; set it on the PSR request in the bridge
+            // from Laravel's authenticated user (e.g. ->withAttribute('role', $request->user()?->role)).
             $config->throttles->add('api',
                 limit: fn(ServerRequestInterface $req): int =>
-                    $req->getHeaderLine('X-Role') === 'admin' ? 5000 : 200,
+                    $req->getAttribute('role') === 'admin' ? 5000 : 200,
                 period: 60,
-                key: KeyExtractors::ip()
             );
 
             // ── Allow2Ban ────────────────────────────────────────
             $config->allow2ban->add('flood-protection',
                 threshold: 500, period: 60, banSeconds: 3600,
-                key: KeyExtractors::ip()
             );
 
             // ── PSR-17 Response Bodies ───────────────────────────
+            // usePsr17Responses() sets the block/throttle response bodies; the
+            // constructor argument is only the fallback ResponseFactory.
             $psr17 = new Psr17Factory();
             $config->usePsr17Responses($psr17, $psr17);
 
@@ -489,24 +547,102 @@ class PhirewallServiceProvider extends ServiceProvider
 }
 ```
 
-**`bootstrap/app.php`** (Laravel 11+)
+**`app/Http/Middleware/Phirewall.php`**
+
+The bridge adapts the PSR-15 engine to Laravel's middleware contract. It uses a probe handler so the real Laravel response is never round-tripped through PSR-7; `StreamedResponse`/`BinaryFileResponse` and other special responses are preserved. On the allowed path it copies Phirewall's `X-RateLimit-*` headers onto the real response.
 
 ```php
-use Flowd\Phirewall\Middleware as PhirewallMiddleware;
+<?php
+
+declare(strict_types=1);
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Flowd\Phirewall\Middleware as PhirewallEngine;
+use Illuminate\Http\Request;
+use Nyholm\Psr7\Factory\Psr17Factory;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use Symfony\Bridge\PsrHttpMessage\Factory\HttpFoundationFactory;
+use Symfony\Bridge\PsrHttpMessage\Factory\PsrHttpFactory;
+use Symfony\Component\HttpFoundation\Response;
+
+final readonly class Phirewall
+{
+    public function __construct(
+        private PhirewallEngine $firewall,
+        private PsrHttpFactory $psrHttpFactory,
+        private HttpFoundationFactory $httpFoundationFactory,
+        private Psr17Factory $psr17,
+    ) {}
+
+    public function handle(Request $request, Closure $next): Response
+    {
+        $psrRequest = $this->psrHttpFactory->createRequest($request);
+        $probe = new class($this->psr17) implements RequestHandlerInterface {
+            private bool $invoked = false;
+            public function __construct(private readonly Psr17Factory $responseFactory) {}
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                $this->invoked = true;
+                return $this->responseFactory->createResponse();
+            }
+            public function wasInvoked(): bool { return $this->invoked; }
+        };
+        $psrResponse = $this->firewall->process($psrRequest, $probe);
+        if (! $probe->wasInvoked()) {
+            return $this->httpFoundationFactory->createResponse($psrResponse);
+        }
+        $response = $next($request);
+        foreach ($psrResponse->getHeaders() as $name => $values) {
+            $response->headers->set($name, $values);
+        }
+        return $response;
+    }
+}
+```
+
+Register the service provider in `bootstrap/providers.php` (Laravel 11+) or the `providers` array in `config/app.php` (Laravel 10 and earlier):
+
+```php
+// bootstrap/providers.php (Laravel 11+)
+return [
+    App\Providers\AppServiceProvider::class,
+    App\Providers\PhirewallServiceProvider::class,
+];
+```
+
+**`bootstrap/app.php`** (Laravel 11/12)
+
+```php
+<?php
+
+use App\Http\Middleware\Phirewall;
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
 
 return Application::configure(basePath: dirname(__DIR__))
-    ->withMiddleware(function (Middleware $middleware) {
-        // Run Phirewall as the outermost middleware
-        $middleware->prepend(PhirewallMiddleware::class);
+    ->withRouting(
+        web: __DIR__.'/../routes/web.php',
+        commands: __DIR__.'/../routes/console.php',
+        health: '/up',
+    )
+    ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->prepend(Phirewall::class);
     })
-    ->create();
+    ->withExceptions(function (Exceptions $exceptions): void {
+        //
+    })->create();
 ```
 
 **`app/Http/Kernel.php`** (Laravel 10 and earlier)
 
 ```php
 protected $middleware = [
-    \Flowd\Phirewall\Middleware::class, // outermost -- before everything
+    \App\Http\Middleware\Phirewall::class, // outermost: runs before everything
     // ... other global middleware
 ];
 ```
@@ -515,7 +651,7 @@ protected $middleware = [
 
 ### Slim
 
-Native PSR-15 support. No external dependencies beyond `ext-apcu`.
+Native PSR-15 support. The middleware auto-detects a PSR-17 `ResponseFactory` from installed packages (`slim/psr7`, which ships with the Slim skeleton, or `nyholm/psr7`) and throws if none is found, so install one (plus `ext-apcu` for `ApcuCache`).
 
 ```php
 <?php
@@ -650,7 +786,7 @@ class PhirewallMiddlewareFactory
         $config = new Config($cache);
         $config->setKeyPrefix('mezzio');
         $config->enableRateLimitHeaders();
-        $config->setFailOpen(true);
+        // failOpen defaults to true; call setFailOpen(false) to fail closed.
 
         // ── Trusted Proxies ──────────────────────────────────────
         $proxyResolver = new TrustedProxyResolver([
@@ -681,8 +817,8 @@ class PhirewallMiddlewareFactory
         $config->blocklists->owasp('owasp', $owaspRules);
 
         // ── Fail2Ban ─────────────────────────────────────────────
-        // KeyExtractors::ip() uses the global resolver set by
-        // setIpResolver() above — no need to repeat clientIp().
+        // No key: these rules default to the client IP from the
+        // global resolver set above.
         $config->fail2ban->add('login-abuse',
             threshold: 5,
             period: 300,
@@ -690,23 +826,19 @@ class PhirewallMiddlewareFactory
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
-            key: KeyExtractors::ip()
         );
 
         // ── Rate Limiting ────────────────────────────────────────
         $config->throttles->add('burst',
             limit: 30, period: 5,
-            key: KeyExtractors::ip()
         );
         $config->throttles->add('global',
             limit: 1000, period: 60,
-            key: KeyExtractors::ip()
         );
 
         // ── Allow2Ban ────────────────────────────────────────────
         $config->allow2ban->add('flood-protection',
             threshold: 500, period: 60, banSeconds: 3600,
-            key: KeyExtractors::ip()
         );
 
         // ── PSR-17 Response Bodies ───────────────────────────────
@@ -738,13 +870,52 @@ return [
 **`config/pipeline.php`**
 
 ```php
-// Phirewall must be the outermost middleware (piped first)
+// ErrorHandler must be piped FIRST so it can catch exceptions thrown by
+// downstream middleware and route handlers. Phirewall does not wrap the
+// downstream handler in a try/catch, so a handler exception propagates
+// through it; if Phirewall were piped above ErrorHandler, that exception
+// would escape the error boundary and reach the emitter unhandled.
+$app->pipe(\Laminas\Stratigility\Middleware\ErrorHandler::class);
+
+// Phirewall runs as early as possible AFTER the error boundary, so it
+// blocks before routing/dispatch while still being covered by ErrorHandler.
 $app->pipe(\Flowd\Phirewall\Middleware::class);
 
 // ... other middleware
 $app->pipe(\Mezzio\Router\Middleware\RouteMiddleware::class);
 $app->pipe(\Mezzio\Router\Middleware\DispatchMiddleware::class);
 ```
+
+---
+
+### TYPO3
+
+**Use the official extension.** For TYPO3, install [`flowd/typo3-firewall`](https://extensions.typo3.org/extension/firewall) rather than wiring Phirewall by hand. It integrates Phirewall into TYPO3, registers the PSR-15 middleware in the frontend stack for you, and adds a backend module for managing block patterns.
+
+```bash
+composer require flowd/typo3-firewall
+```
+
+Phirewall is then configured in TYPO3's core configuration file `config/system/phirewall.php`. That file must **return a closure** that receives the PSR-14 `EventDispatcherInterface` and returns a built `Config` (the cache is the first constructor argument, the dispatcher the second). The full [Phirewall configuration](/getting-started) applies inside the closure; use one of Phirewall's bundled PSR-16 stores (`RedisCache`, `ApcuCache`, `PdoCache`), since TYPO3's own caches are not PSR-16.
+
+```php
+<?php
+// config/system/phirewall.php
+use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Store\ApcuCache;
+use Psr\EventDispatcher\EventDispatcherInterface;
+
+return function (EventDispatcherInterface $eventDispatcher): Config {
+    $config = new Config(new ApcuCache(), $eventDispatcher);
+
+    $config->blocklists->knownScanners();
+    $config->throttles->add('burst', limit: 30, period: 5);
+
+    return $config;
+};
+```
+
+Block patterns created in the backend module are stored in `config/system/phirewall.patterns.json` and take effect immediately. See the [extension documentation](https://docs.typo3.org/p/flowd/typo3-firewall/main/en-us/) for details.
 
 ---
 
@@ -776,7 +947,6 @@ $config->blocklists->knownScanners();
 // Rate limit: 100 requests per minute per IP
 $config->throttles->add('api',
     limit: 100, period: 60,
-    key: KeyExtractors::ip()
 );
 
 $middleware = new Middleware($config);
@@ -786,7 +956,7 @@ $middleware = new Middleware($config);
 
 ## Basic: API Rate Limiting
 
-Tiered rate limits for an API with authenticated and anonymous users.
+Tiered per-client-IP rate limits for an API, with a tighter cap on an expensive endpoint.
 
 ```php
 use Flowd\Phirewall\Config;
@@ -811,21 +981,6 @@ $config->throttles->add('burst',
 $config->throttles->add('global',
     limit: 1000, period: 60,
     key: KeyExtractors::clientIp($proxyResolver)
-);
-
-// Authenticated user limits (higher)
-$config->throttles->add('user',
-    limit: 5000, period: 60,
-    key: KeyExtractors::header('X-User-Id')
-);
-
-// Anonymous limits (lower, skip if authenticated)
-$config->throttles->add('anon',
-    limit: 100, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getHeaderLine('X-User-Id') !== '') return null;
-        return $proxyResolver->resolve($req);
-    }
 );
 
 // Expensive endpoint limit
@@ -857,7 +1012,6 @@ $config = new Config(new InMemoryCache());
 $config->throttles->sliding('api-sliding',
     limit: 100,
     period: 60,
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -881,7 +1035,7 @@ $config = new Config(new InMemoryCache());
 $config->throttles->multi('api', [
     1  => 3,   // 3 req/s burst limit
     60 => 60,  // 60 req/min sustained limit
-], KeyExtractors::ip());
+]);
 ```
 
 ---
@@ -899,12 +1053,13 @@ use Psr\Http\Message\ServerRequestInterface;
 $config = new Config(new InMemoryCache());
 $config->enableRateLimitHeaders();
 
+// `role` is a request attribute set by an upstream auth middleware
+// ($req->withAttribute('role', ...)), not a forgeable client header.
 // Dynamic limit: admins get 1000 req/min, regular users get 100 req/min
 $config->throttles->add('role-based',
     limit: fn(ServerRequestInterface $req): int =>
-        $req->getHeaderLine('X-Role') === 'admin' ? 1000 : 100,
+        $req->getAttribute('role') === 'admin' ? 1000 : 100,
     period: 60,
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -930,7 +1085,6 @@ $config->tracks->add('login-attempts',
     period: 3600,
     filter: fn($req) => $req->getUri()->getPath() === '/login'
         && $req->getMethod() === 'POST',
-    key: KeyExtractors::ip()
 );
 
 // Track login attempts by username for alerting
@@ -978,7 +1132,6 @@ $config->fail2ban->add('login-brute-force',
     ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Per-username throttle: 5 attempts per 5 minutes per username
@@ -1008,20 +1161,19 @@ use Psr\Http\Message\ServerRequestInterface;
 
 $config = new Config(new InMemoryCache());
 
-// The filter returns false -- failures are signaled programmatically
+// The filter returns false; failures are signaled programmatically
 $config->fail2ban->add('login-failures',
     threshold: 3,
     period: 300,
     ban: 3600,
     filter: fn(ServerRequestInterface $req): bool => false,
-    key: KeyExtractors::ip()
 );
 
 // In your login handler:
 // $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 // if ($loginFailed) {
 //     // The firewall derives the key from the rule's own keyExtractor
-//     // -- no need to repeat the IP/header/etc. extraction here.
+//     // No need to repeat the IP/header/etc. extraction here.
 //     $context?->recordFailure('login-failures');
 // }
 ```
@@ -1036,7 +1188,6 @@ Allow2Ban is the inverse of Fail2Ban: it counts every request for a key and bans
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 
 $config = new Config(new InMemoryCache());
@@ -1046,16 +1197,6 @@ $config->allow2ban->add('high-volume-ban',
     threshold: 100,
     period: 60,
     banSeconds: 3600,
-    key: KeyExtractors::ip()
-);
-
-// Ban by API key for authenticated routes. hashedHeader() stores a sha256
-// fingerprint of the key in the ban registry instead of the raw credential.
-$config->allow2ban->add('api-key-ban',
-    threshold: 1000,
-    period: 60,
-    banSeconds: 300,
-    key: KeyExtractors::hashedHeader('X-Api-Key')
 );
 ```
 
@@ -1172,14 +1313,12 @@ $config = new Config(new InMemoryCache());
 $config->tracks->add('every-login-attempt',
     period: 60,
     filter: fn($req) => $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Track with threshold: thresholdReached=true at 5+ hits
 $config->tracks->add('suspicious-login-burst',
     period: 60,
     filter: fn($req) => $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip(),
     limit: 5,
 );
 ```
@@ -1203,7 +1342,7 @@ $pdo->exec('PRAGMA journal_mode=WAL');
 $cache = new PdoCache($pdo);
 
 $config = new Config($cache);
-$config->throttles->add('api', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->add('api', limit: 100, period: 60);
 
 // MySQL (shared across multiple app servers)
 // $pdo = new PDO('mysql:host=db.example.com;dbname=myapp', getenv('DB_USER'), getenv('DB_PASSWORD'));
@@ -1252,7 +1391,7 @@ $psr17Factory = new Psr17Factory();
 $config->blocklistedResponseFactory = new Psr17BlocklistedResponseFactory(
     $psr17Factory,
     $psr17Factory,
-    'Access Denied -- your request has been blocked.',
+    'Access Denied. Your request has been blocked.',
 );
 
 $config->throttledResponseFactory = new Psr17ThrottledResponseFactory(
@@ -1527,7 +1666,7 @@ $dispatcher = new class ($logger) implements EventDispatcherInterface {
             $event instanceof BlocklistMatched => $this->logger->warning('Request blocklisted', $context),
             $event instanceof ThrottleExceeded => $this->logger->notice('Rate limited', $context),
             $event instanceof SafelistMatched => $this->logger->debug('Safelisted', $context),
-            $event instanceof FirewallError => $this->logger->error('Firewall error', ['error' => $event->throwable->getMessage()]),
+            $event instanceof FirewallError => $this->logger->error('Firewall error', ['error' => $event->exception->getMessage()]),
             default => null,
         };
 
@@ -1536,11 +1675,10 @@ $dispatcher = new class ($logger) implements EventDispatcherInterface {
 };
 
 $config = new Config(new RedisCache($redis), $dispatcher);
-$config->throttles->add('api', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->add('api', limit: 100, period: 60);
 $config->fail2ban->add('login', threshold: 5, period: 300, ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -1582,12 +1720,10 @@ $config->blocklists->ip('known-bad', ['198.51.100.0/24', '203.0.113.0/24']);
 $config->fail2ban->add('persistent-scanner',
     threshold: 10, period: 60, ban: 86400,
     filter: fn($req) => true,
-    key: KeyExtractors::ip()
 );
 
 // Global rate limit as backstop
 $config->throttles->add('global',
     limit: 100, period: 60,
-    key: KeyExtractors::ip()
 );
 ```

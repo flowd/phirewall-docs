@@ -4,7 +4,7 @@ outline: deep
 
 # Fail2Ban & Allow2Ban
 
-Fail2Ban and Allow2Ban are Phirewall's automatic banning mechanisms. They monitor request patterns and temporarily ban clients that exceed configurable thresholds -- the primary defense against brute force attacks, credential stuffing, and persistent scanners.
+Fail2Ban and Allow2Ban are Phirewall's automatic banning mechanisms. They monitor request patterns and temporarily ban clients that exceed configurable thresholds, the primary defense against brute force attacks, credential stuffing, and persistent scanners.
 
 ## Fail2Ban
 
@@ -36,7 +36,7 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
 
 1. A **filter** closure checks each incoming request for a condition (e.g., a POST to `/login`)
 2. Matches are counted per **key** (e.g., IP address) within a time **period**
-3. When the count **reaches** the **threshold**, the key is **banned** for a configurable duration (e.g., `threshold: 5` bans on the 5th matching request — the same request that brings the counter to 5 is itself blocked)
+3. When the count **reaches** the **threshold**, the key is **banned** for a configurable duration (e.g., `threshold: 5` bans on the 5th matching request; the same request that brings the counter to 5 is itself blocked)
 4. Banned keys receive `403 Forbidden` immediately, without further rule evaluation
 
 ### Configuration
@@ -48,7 +48,7 @@ $config->fail2ban->add(
     int $period,
     int $ban,
     Closure $filter,
-    Closure $key
+    ?Closure $key = null
 ): Fail2BanSection
 ```
 
@@ -58,8 +58,8 @@ $config->fail2ban->add(
 | `$threshold` | `int` | Number of filter matches that triggers the ban (must be >= 1). The Nth matching request is itself banned (matching rack-attack `maxretry` semantics). |
 | `$period` | `int` | Time window for counting matches in seconds (must be >= 1) |
 | `$ban` | `int` | Ban duration in seconds (must be >= 1) |
-| `$filter` | `Closure` | `fn(ServerRequestInterface): bool` -- return `true` to count as a match |
-| `$key` | `Closure` | `fn(ServerRequestInterface): ?string` -- return key to track, or `null` to skip |
+| `$filter` | `Closure` | `fn(ServerRequestInterface): bool`, return `true` to count as a match |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string`, return key to track, or `null` to skip. When the whole argument is omitted, defaults to the client IP from the Config's IP resolver (`Config::setIpResolver()`, typically `KeyExtractors::clientIp($proxy)`), falling back to `KeyExtractors::ip()` (REMOTE_ADDR). The resolver is read per request, so it can be set before or after the rule. |
 
 ::: warning
 Fail2Ban filters evaluate the **incoming request** before the handler runs. The filter can only inspect request data (path, method, headers, query parameters). It cannot see the application's response. To ban based on application outcomes (like actual failed logins), use the [Request Context API](#post-handler-signaling-with-requestcontext) instead.
@@ -79,7 +79,6 @@ $config->fail2ban->add('login-brute-force',
     ban: 3600,         // 1 hour ban
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 ```
 
@@ -101,7 +100,6 @@ $config->fail2ban->add('credential-stuffing-ip',
     ban: 7200,         // 2 hour ban
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Per-username throttle: 5 attempts per 5 minutes per username
@@ -138,19 +136,19 @@ This three-layer strategy defends against different attack speeds:
 
 ### API Signature Abuse
 
-Ban clients sending invalid API signatures. A middleware running before Phirewall validates signatures and marks the request:
+Ban clients sending invalid API signatures. A middleware running before Phirewall validates the signature and records the outcome and the verified client id on the request as attributes:
 
 ```php
-// The Fail2Ban rule reads the header set by the prior middleware
+// The Fail2Ban rule reads the attributes the prior middleware set
 $config->fail2ban->add('api-abuse',
     threshold: 3,
     period: 120,       // 2 minute window
     ban: 900,          // 15 minute ban
-    filter: fn($req) => $req->getHeaderLine('X-Signature-Invalid') === '1',
-    key: function ($req): ?string {
-        return $req->getHeaderLine('X-API-Key')
-            ?: $req->getServerParams()['REMOTE_ADDR'];
-    }
+    filter: fn($req) => $req->getAttribute('apiSignatureValid') === false,
+    // Key on the verified client id (an internal identifier, not the raw API
+    // secret), falling back to the client IP when the request is unauthenticated.
+    key: fn($req): ?string =>
+        $req->getAttribute('apiClientId') ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null),
 );
 ```
 
@@ -166,17 +164,16 @@ $config->fail2ban->add('persistent-scanner',
     period: 60,        // in 1 minute
     ban: 86400,        // 24 hour ban
     filter: fn($req) => true,
-    key: KeyExtractors::ip()
 );
 ```
 
 ::: warning
-The filter `fn($req) => true` counts every request that reaches the Fail2Ban layer. Because safelisted and blocklisted requests never reach Fail2Ban, this effectively counts requests that passed safelists and blocklists but are still suspicious. Use with care -- this is a broad filter.
+The filter `fn($req) => true` counts every request that reaches the Fail2Ban layer. Because safelisted and blocklisted requests never reach Fail2Ban, this effectively counts requests that passed safelists and blocklists but are still suspicious. Use with care: this is a broad filter.
 :::
 
 ## Post-Handler Signaling with RequestContext {#post-handler-signaling-with-requestcontext}
 
-Standard Fail2Ban filters run **before** your application handler, so they can only inspect the incoming request. The **RequestContext API** solves this by letting your handler signal failures **after** it has processed the request -- for example, after verifying credentials against a database.
+Standard Fail2Ban filters run **before** your application handler, so they can only inspect the incoming request. The **RequestContext API** solves this by letting your handler signal failures **after** it has processed the request, for example after verifying credentials against a database.
 
 ### How It Works
 
@@ -207,7 +204,7 @@ Response
 
 ### Setup
 
-Configure a fail2ban rule with a filter that always returns `false`. The filter will never match pre-handler -- all counting happens via `recordFailure()`:
+Configure a fail2ban rule with a filter that always returns `false`. The filter will never match pre-handler; all counting happens via `recordFailure()`:
 
 ```php
 use Flowd\Phirewall\Config;
@@ -223,13 +220,12 @@ $config->fail2ban->add(
     period: 300,       // 5 minute window
     ban: 3600,         // 1 hour ban
     filter: fn(ServerRequestInterface $req): bool => false,
-    key: KeyExtractors::ip(),
 );
 ```
 
 ### Recording Failures in Your Handler
 
-Inside your request handler, retrieve the `RequestContext` from the request attribute and call `recordFailure()`. The second argument is optional -- when omitted, the firewall reuses the rule's own `keyExtractor` against this request, so the handler doesn't need to repeat the IP/header/etc. extraction:
+Inside your request handler, retrieve the `RequestContext` from the request attribute and call `recordFailure()`. The second argument is optional; when omitted, the firewall reuses the rule's own `keyExtractor` against this request, so the handler doesn't need to repeat the IP/header/etc. extraction:
 
 ```php
 use Flowd\Phirewall\Context\RequestContext;
@@ -242,7 +238,7 @@ class LoginController
         $password = $request->getParsedBody()['password'] ?? '';
 
         if (!$this->auth->verify($username, $password)) {
-            // Signal the failure -- the firewall extracts the key from
+            // Signal the failure; the firewall extracts the key from
             // the rule's own keyExtractor against this request.
             $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
             $context?->recordFailure('login-failures');
@@ -263,14 +259,14 @@ $context?->recordFailure('login-failures', $userIdFromSession);
 
 | Method | Description |
 |--------|-------------|
-| `$context->recordFailure(string $ruleName, ?string $key = null)` | Record a fail2ban failure signal. `$ruleName` must match a configured fail2ban rule. When `$key` is `null` the firewall derives it from the rule's `keyExtractor`. |
-| `$context->recordHit(string $ruleName, ?string $key = null)` | Counterpart for allow2ban rules -- same shape, routed through the allow2ban evaluator. See [Request Context](/advanced/request-context#recording-hits-for-allow2ban). |
+| `$context->recordFailure(string $ruleName, ?string $key = null)` | Record a fail2ban failure signal. `$ruleName` must match a configured fail2ban rule name. `$key` is **optional**; when omitted, the rule's own key extractor resolves the discriminator from the current request, so the handler does not need to know whether the rule keys on IP, header, or anything else. |
+| `$context->recordHit(string $ruleName, ?string $key = null)` | Counterpart for allow2ban rules; same shape, routed through the allow2ban evaluator. See [Request Context](/advanced/request-context#recording-allow2ban-hits). |
 | `$context->getResult()` | Returns the `FirewallResult` from the pre-handler evaluation |
 | `$context->hasRecordedSignals()` | Whether any signals have been recorded |
 | `$context->getRecordedSignals()` | Returns all recorded `RecordedSignal` objects |
 
 ::: tip
-Use the null-safe operator (`$context?->recordFailure(...)`) so your handler works safely both with and without the middleware in the stack -- useful in unit tests where the middleware may not be present.
+Use the null-safe operator (`$context?->recordFailure(...)`) so your handler works safely both with and without the middleware in the stack, useful in unit tests where the middleware may not be present.
 :::
 
 ### Why Use RequestContext?
@@ -285,7 +281,7 @@ RequestContext is the most accurate approach because it only increments the fail
 
 ## Allow2Ban {#allow2ban}
 
-Allow2Ban is a **dedicated section** (`$config->allow2ban`) with its own API. It is the inverse of Fail2Ban: instead of counting only filtered "bad" requests, it counts **every request** for a given key and bans once the count reaches the threshold. Think of it as "n requests allowed, then you're out" — with `threshold: n`, the nth request itself is the one that triggers and is blocked.
+Allow2Ban is a **dedicated section** (`$config->allow2ban`) with its own API. It is the inverse of Fail2Ban: instead of counting only filtered "bad" requests, it counts **every request** for a given key and bans once the count reaches the threshold. Think of it as "n requests allowed, then you're out": with `threshold: n`, the nth request itself is the one that triggers and is blocked.
 
 ### How It Works
 
@@ -298,7 +294,7 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
             Increment request counter
                     |
                     v
-            Counter >= threshold? --> No --> Continue to throttle rules
+            Counter >= threshold? --> No --> Allow (pass to handler)
                     |
                     Yes
                     |
@@ -306,7 +302,7 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
             BAN key for configured duration --> 403 Forbidden
 ```
 
-There is no filter -- every request matching the key extractor is counted.
+There is no filter; every request matching the key extractor is counted.
 
 ### Configuration
 
@@ -316,7 +312,7 @@ $config->allow2ban->add(
     int $threshold,
     int $period,
     int $banSeconds,
-    Closure $key
+    ?Closure $key = null
 ): Allow2BanSection
 ```
 
@@ -326,7 +322,7 @@ $config->allow2ban->add(
 | `$threshold` | `int` | Number of requests that triggers the ban (must be >= 1). The Nth request is itself banned (matching rack-attack `maxretry` semantics). |
 | `$period` | `int` | Time window for counting requests in seconds (must be >= 1) |
 | `$banSeconds` | `int` | Ban duration in seconds (must be >= 1) |
-| `$key` | `Closure` | `fn(ServerRequestInterface): ?string` -- return key to track, or `null` to skip |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string`, return key to track, or `null` to skip. When omitted, defaults to the client IP from the Config's IP resolver (see Fail2Ban's `$key` above). |
 
 ::: tip
 Note the parameter name difference: Fail2Ban uses `$ban`, Allow2Ban uses `$banSeconds`. Both accept duration in seconds.
@@ -345,28 +341,26 @@ $config->allow2ban->add(
     threshold: 100,
     period: 60,
     banSeconds: 3600,
-    key: KeyExtractors::ip(),
 );
 ```
 
 ### API Key Abuse Protection
 
-Ban API keys that exceed expected usage. Unlike rate limiting (which returns 429 and lets the client retry), Allow2Ban **bans** the key entirely -- a stronger response for abuse:
+Ban API keys that exceed expected usage. Unlike rate limiting (which returns 429 and lets the client retry), Allow2Ban **bans** the key entirely, a stronger response for abuse:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
-
-// Ban any API key that makes more than 1000 requests in 60 seconds.
-// hashedHeader() stores the sha256 fingerprint instead of the raw key so the
-// ban registry doesn't carry the credential verbatim.
+// Ban any client IP that makes more than 1000 requests in 60 seconds.
 $config->allow2ban->add(
-    name: 'api-key-abuse',
+    name: 'api-volume-abuse',
     threshold: 1000,
     period: 60,
     banSeconds: 300,   // 5 minute ban
-    key: KeyExtractors::hashedHeader('X-Api-Key'),
 );
 ```
+
+::: warning Header keys are client-controlled
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold (a trivial bypass). Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')`: the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+:::
 
 ### Unauthenticated Endpoint Abuse
 
@@ -397,11 +391,51 @@ $config->allow2ban->add(
 | Aspect | Fail2Ban | Allow2Ban |
 |--------|----------|-----------|
 | **Section** | `$config->fail2ban` | `$config->allow2ban` |
-| **Filter** | Required -- only matching requests are counted | No filter -- all requests for the key are counted |
+| **Filter** | Required: only matching requests are counted | No filter: all requests for the key are counted |
 | **Trigger** | Repeated "bad" requests matching the filter | Exceeding a total request volume |
 | **Use case** | Brute force, credential stuffing, scanner blocking | Volume abuse, DDoS mitigation, API abuse |
 | **Event** | `Fail2BanBanned` | `Allow2BanBanned` |
 | **Ban parameter** | `$ban` | `$banSeconds` |
+
+## Managing Bans
+
+`Flowd\Phirewall\Http\Firewall` is the supported runtime-management entry point. Construct it with the same `Config` your middleware uses; all state lives in the `Config` cache, so every `Firewall` over the same `Config` shares bans and counters.
+
+```php
+use Flowd\Phirewall\BanType;
+use Flowd\Phirewall\Http\Firewall;
+
+$firewall = new Firewall($config);
+
+// Is a key currently banned? BanType is REQUIRED (no default).
+$firewall->isBanned('login-failures', $ip, BanType::Fail2Ban);
+$firewall->isBanned('high-volume-ban', $ip, BanType::Allow2Ban);
+
+// Lift a specific fail2ban ban (also clears its fail counter).
+$firewall->resetFail2Ban('login-failures', $ip);
+
+// Clear a throttle counter.
+$firewall->resetThrottle('api', $ip);
+
+// Clear the whole cache instance (counters, bans, tracking).
+$firewall->resetAll();
+```
+
+`isBanned()` requires an explicit `BanType` because allow2ban and fail2ban store their bans under distinct cache keys, so an implicit default would silently answer for the wrong category:
+
+```php
+enum BanType: string
+{
+    case Allow2Ban = 'allow2ban';
+    case Fail2Ban = 'fail2ban';
+}
+```
+
+Notes:
+
+- For `multi()` throttle sub-rules, reset each window individually (for example `'api:1s'` and `'api:60s'`); for dynamic-period rules, pass the `:p{period}` suffix.
+- `resetAll()` calls `cache->clear()` and wipes the entire cache instance, so give phirewall a dedicated cache (or key-prefixed namespace) if you share Redis/APCu with your application.
+- All keys are normalized through the discriminator normalizer, so lookups match regardless of input casing.
 
 ## Events
 
@@ -499,19 +533,16 @@ $config->fail2ban->add('login',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Layer 4: Allow2Ban for volume abuse
 $config->allow2ban->add('volume-abuse',
     threshold: 200, period: 60, banSeconds: 1800,
-    key: KeyExtractors::ip()
 );
 
 // Layer 5: Rate limiting as backstop
 $config->throttles->add('global',
     limit: 100, period: 60,
-    key: KeyExtractors::ip()
 );
 ```
 

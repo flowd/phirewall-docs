@@ -19,7 +19,7 @@ $dispatcher = /* your PSR-14 event dispatcher */;
 $config = new Config(new InMemoryCache(), $dispatcher);
 ```
 
-If no dispatcher is provided, events are silently skipped with zero overhead. This means observability is entirely opt-in -- your firewall runs at full speed with no event overhead until you plug in a dispatcher.
+If no dispatcher is provided, events are silently skipped with zero overhead. This means observability is entirely opt-in: your firewall runs at full speed with no event overhead until you plug in a dispatcher.
 
 ## PSR-14 Events
 
@@ -112,7 +112,7 @@ $event->serverRequest;  // ServerRequestInterface
 
 ### TrackHit
 
-Track events fire on **every** matching request -- they never block. When a `limit` is configured on the track rule, the `thresholdReached` flag becomes `true` once the counter reaches the threshold. This makes track rules ideal for alerting without blocking.
+Track events fire on **every** matching request; they never block. When a `limit` is configured on the track rule, the `thresholdReached` flag becomes `true` once the counter reaches the threshold. This makes track rules ideal for alerting without blocking.
 
 ```php
 use Flowd\Phirewall\Events\TrackHit;
@@ -177,7 +177,7 @@ Since this event fires on every request, expensive operations in its handler dir
 
 ## Diagnostics Counters
 
-Phirewall provides a built-in `DiagnosticsCounters` class that collects lightweight, in-memory counters for every decision category — perfect for health endpoints, dashboards, and quick debugging.
+Phirewall provides a built-in `DiagnosticsCounters` class that collects lightweight, in-memory counters for every decision category, perfect for health endpoints, dashboards, and quick debugging.
 
 `DiagnosticsCounters` is an observer, not a dispatcher. To use it, wrap it with `DiagnosticsDispatcher`:
 
@@ -667,7 +667,7 @@ class FirewallEventsTest extends TestCase
 ```
 
 ::: tip Use `Firewall` directly in tests
-The `Firewall` class returns a `Decision` object with `isPass()` and `isBlock()` methods. This is faster than running through the full PSR-15 middleware pipeline and does not require a PSR-17 response factory.
+The `Firewall` class returns a `FirewallResult` object with `isPass()` and `isBlocked()` methods. This is faster than running through the full PSR-15 middleware pipeline and does not require a PSR-17 response factory.
 :::
 
 ## Performance Considerations
@@ -702,7 +702,7 @@ public function dispatch(object $event): object
 ```
 
 ::: tip
-Always process blocking events (`BlocklistMatched`, `Fail2BanBanned`, `ThrottleExceeded`, `Allow2BanBanned`, `FirewallError`) at full volume -- these are low-frequency, high-signal events that you do not want to miss.
+Always process blocking events (`BlocklistMatched`, `Fail2BanBanned`, `ThrottleExceeded`, `Allow2BanBanned`, `FirewallError`) at full volume; these are low-frequency, high-signal events that you do not want to miss.
 :::
 
 ### Protect Sensitive Data
@@ -714,9 +714,13 @@ $maskedIp = preg_replace('/\.\d+$/', '.xxx', $event->key);
 $this->logger->info('Event', ['key' => $maskedIp]);
 ```
 
+::: warning Keys can be secrets
+The discriminator in event payloads (`$event->key`) and in the ban-registry cache entry is the **raw** value the rule keyed on. When a rule keys on a credential-bearing header, that is a live secret; never log it verbatim and never expose the ban registry. Key such rules with `KeyExtractors::hashedHeader()` so only a sha256 fingerprint is stored and emitted.
+:::
+
 ## Related Pages
 
-- [Track & Notifications](/advanced/track-notifications) -- track rules, thresholds, and notification patterns
-- [Request Context](/advanced/request-context) -- post-handler failure signaling for Fail2Ban
-- [Rate Limiting](/features/rate-limiting) -- throttle rules and rate limit headers
-- [Fail2Ban & Allow2Ban](/features/fail2ban) -- automatic banning
+- [Track & Notifications](/advanced/track-notifications) - track rules, thresholds, and notification patterns
+- [Request Context](/advanced/request-context) - post-handler failure signaling for Fail2Ban
+- [Rate Limiting](/features/rate-limiting) - throttle rules and rate limit headers
+- [Fail2Ban & Allow2Ban](/features/fail2ban) - automatic banning

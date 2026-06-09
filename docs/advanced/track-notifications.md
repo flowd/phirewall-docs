@@ -4,11 +4,11 @@ outline: deep
 
 # Track & Notifications
 
-Track rules provide **passive counting without blocking**. They are ideal for observability, alerting thresholds, and feeding data into dashboards -- all without affecting request processing.
+Track rules provide **passive counting without blocking**. They are ideal for observability, alerting thresholds, and feeding data into dashboards, all without affecting request processing.
 
 ## How Tracking Works
 
-Track rules are evaluated **first** in the pipeline, before safelists and blocklists. They always run -- even for requests that will be safelisted. This makes them reliable for comprehensive monitoring.
+Track rules are evaluated **first** in the pipeline, before safelists and blocklists. They always run, even for requests that will be safelisted. This makes them reliable for comprehensive monitoring.
 
 ```text
 Request --> Track (passive) --> Safelist --> Blocklist --> Fail2Ban --> Throttle --> Allow2Ban --> Pass
@@ -24,7 +24,7 @@ Here is what happens step by step:
 3. If the filter returns `true`, the **key** closure extracts a grouping key (for example, the client IP)
 4. The counter for that key is incremented in the cache, scoped to the rule's **period** (time window)
 5. A `TrackHit` event is dispatched via the PSR-14 (PHP Standard Recommendation for Event Dispatching) event dispatcher
-6. The request continues to the remaining pipeline stages -- track rules **never** block
+6. The request continues to the remaining pipeline stages; track rules **never** block
 
 ## API Reference
 
@@ -33,7 +33,7 @@ $config->tracks->add(
     string   $name,
     int      $period,
     Closure  $filter,
-    Closure  $key,
+    ?Closure $key = null,
     ?int     $limit = null   // optional threshold
 ): TrackSection
 ```
@@ -42,8 +42,8 @@ $config->tracks->add(
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier (must not be empty) |
 | `$period` | `int` | Time window for counting in seconds (must be >= 1) |
-| `$filter` | `Closure` | `fn(ServerRequestInterface): bool` -- return `true` to count this request |
-| `$key` | `Closure` | `fn(ServerRequestInterface): ?string` -- return the grouping key, or `null` to skip counting |
+| `$filter` | `Closure` | `fn(ServerRequestInterface): bool` - return `true` to count this request |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string` - return the grouping key, or `null` to skip counting. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 | `$limit` | `?int` | Optional threshold. When set, the `TrackHit` event includes a `thresholdReached` flag that becomes `true` once the counter reaches this value |
 
 ::: tip Return type
@@ -68,21 +68,17 @@ $config->tracks->add('login-attempts',
     period: 3600,
     filter: fn($request) => $request->getMethod() === 'POST'
         && $request->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip(),
 );
 ```
 
 ### Track API Usage by User
 
-Monitor per-user API consumption using a custom header:
+Monitor API consumption per client (keyed on the client IP by default):
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
-
 $config->tracks->add('api-usage',
     period: 3600,
     filter: fn($request) => str_starts_with($request->getUri()->getPath(), '/api/'),
-    key: KeyExtractors::header('X-User-Id'),
 );
 ```
 
@@ -96,7 +92,6 @@ use Flowd\Phirewall\KeyExtractors;
 $config->tracks->add('admin-access',
     period: 600,
     filter: fn($request) => str_starts_with($request->getUri()->getPath(), '/admin/'),
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -355,7 +350,7 @@ The returned array is organized by category, each with a total and a breakdown b
 ]
 ```
 
-Categories tracked: `safelisted`, `blocklisted`, `throttle_exceeded`, `fail2ban_banned`, `track_hit`, `passed`, `fail2ban_blocked`.
+Categories tracked: `safelisted`, `blocklisted`, `throttle_exceeded`, `fail2ban_banned`, `allow2ban_banned`, `track_hit`, `passed`, `fail2ban_blocked`.
 
 ### Exposing as a Prometheus-Style Metrics Endpoint
 
@@ -411,7 +406,7 @@ Use track rules during an initial monitoring phase. Once you are confident in yo
 
 3. **Set appropriate periods.** The period determines how long counters accumulate. Use shorter periods (60-300s) for real-time alerting and longer periods (3600s) for trend analysis.
 
-4. **Use the `$limit` parameter for alert thresholds.** Instead of checking `$event->count >= N` in your event handler, configure `limit: N` on the track rule and check `$event->thresholdReached` -- it is more readable and keeps the threshold visible in your configuration.
+4. **Use the `$limit` parameter for alert thresholds.** Instead of checking `$event->count >= N` in your event handler, configure `limit: N` on the track rule and check `$event->thresholdReached`, which is more readable and keeps the threshold visible in your configuration.
 
 5. **Alert on specific counts, not ranges.** When sending notifications, compare `$event->count === $event->limit` (exact match) rather than `$event->count >= $event->limit` to avoid flooding your notification channel with duplicate alerts.
 
@@ -421,7 +416,7 @@ Use track rules during an initial monitoring phase. Once you are confident in yo
 
 ## Related Pages
 
-- [Observability](/advanced/observability) -- logging, OpenTelemetry, and monitoring integration
-- [Fail2Ban & Allow2Ban](/features/fail2ban) -- automatic banning based on thresholds
-- [Request Context](/advanced/request-context) -- post-handler failure signaling for Fail2Ban
-- [Rate Limiting](/features/rate-limiting) -- throttling and rate limit headers
+- [Observability](/advanced/observability) - logging, OpenTelemetry, and monitoring integration
+- [Fail2Ban & Allow2Ban](/features/fail2ban) - automatic banning based on thresholds
+- [Request Context](/advanced/request-context) - post-handler failure signaling for Fail2Ban
+- [Rate Limiting](/features/rate-limiting) - throttling and rate limit headers

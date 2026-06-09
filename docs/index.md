@@ -20,7 +20,7 @@ features:
     details: Fixed-window, sliding-window, and multi-window throttling with dynamic per-request limits.
   - icon: "\uD83D\uDEE1\uFE0F"
     title: Bot Detection
-    details: Block known scanners, verify search engine bots via rDNS, and detect suspicious headers — each with a single method call.
+    details: Block known scanners, verify search engine bots via rDNS, and detect suspicious headers, each with a single method call.
   - icon: "\uD83D\uDEAB"
     title: IP Blocking & Safelisting
     details: Safelist and blocklist IPs and CIDR ranges. Pattern backends with file-backed persistence and automatic expiration.
@@ -30,17 +30,23 @@ features:
   - icon: "\uD83D\uDD04"
     title: Fail2Ban & Allow2Ban
     details: Ban clients after threshold violations. Signal failures from your application handler via RequestContext.
+  - icon: "\uD83E\uDDE9"
+    title: Presets & Portable Config
+    details: Ready-made, serializable rule bundles you can layer, compose, and override by name.
   - icon: "\uD83D\uDCE6"
     title: PSR-15 Compatible
-    details: Works with any PSR-15 framework — Laravel, Symfony, Slim, TYPO3, Mezzio, and more.
+    details: "Works with any PSR-15 framework: Laravel, Symfony, Slim, TYPO3, Mezzio, and more."
+  - icon: "💾"
+    title: Flexible Storage
+    details: "PSR-16 cache backends included: in-memory, APCu, Redis, and PDO."
 ---
 
 <div class="services-home">
   <div class="services-home-inner">
-    <h2>Built by Flowd GmbH — Available for Your Next Project</h2>
+    <h2>Built by Flowd GmbH - Available for Your Next Project</h2>
     <p>
       <strong><a href="https://flowd.de" target="_blank" rel="noopener noreferrer">Flowd GmbH<span class="visually-hidden"> (opens in new tab)</span></a></strong> is a highly specialized partner for custom application solutions.
-      Since 2018, our team of experienced software engineers and IT consultants builds tailored software for mid-market companies and enterprises — efficient, stable, and with long-term support.
+      Since 2018, our team of experienced software engineers and IT consultants builds tailored software for mid-market companies and enterprises: efficient, stable, and with long-term support.
     </p>
     <div class="services-home-grid">
       <div>

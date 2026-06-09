@@ -25,12 +25,14 @@ use Psr\Http\Message\ServerRequestInterface;
 $config = new Config(new InMemoryCache());
 $config->enableRateLimitHeaders();
 
+// `role` is a PSR-7 request attribute your auth middleware sets before Phirewall
+// runs (e.g. $request->withAttribute('role', $user->role)). Attributes are
+// server-side only, so a client cannot forge them the way it could a header.
 // Admins get 1000 req/min, regular users get 100 req/min
 $config->throttles->add('role-based',
     limit: fn(ServerRequestInterface $request): int =>
-        $request->getHeaderLine('X-Role') === 'admin' ? 1000 : 100,
+        $request->getAttribute('role') === 'admin' ? 1000 : 100,
     period: 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -46,7 +48,6 @@ $config->throttles->add('endpoint-adaptive',
     limit: 100,
     period: fn(ServerRequestInterface $request): int =>
         str_starts_with($request->getUri()->getPath(), '/api/export') ? 3600 : 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -62,10 +63,9 @@ You can make both the limit and the period dynamic:
 // Enterprise users: 10,000 req/hour. Everyone else: 100 req/min.
 $config->throttles->add('fully-dynamic',
     limit: fn(ServerRequestInterface $request): int =>
-        $request->getHeaderLine('X-Plan') === 'enterprise' ? 10000 : 100,
+        $request->getAttribute('plan') === 'enterprise' ? 10000 : 100,
     period: fn(ServerRequestInterface $request): int =>
-        $request->getHeaderLine('X-Plan') === 'enterprise' ? 3600 : 60,
-    key: KeyExtractors::ip(),
+        $request->getAttribute('plan') === 'enterprise' ? 3600 : 60,
 );
 ```
 
@@ -76,7 +76,7 @@ $config->throttles->add(
     string $name,
     int|Closure $limit,     // Static int or Closure(ServerRequestInterface): int
     int|Closure $period,    // Static int or Closure(ServerRequestInterface): int
-    Closure $key,           // Closure(ServerRequestInterface): ?string
+    ?Closure $key = null,   // Closure(ServerRequestInterface): ?string
 ): ThrottleSection
 ```
 
@@ -85,7 +85,7 @@ $config->throttles->add(
 | `$name` | `string` | Rule name (appears in headers and events) |
 | `$limit` | `int\|Closure` | Maximum requests in the period. Closure receives the request. |
 | `$period` | `int\|Closure` | Time window in seconds. Closure receives the request. |
-| `$key` | `Closure` | Key extractor. Return `null` to skip this rule for the request. |
+| `$key` | `?Closure` | Key extractor; return `null` to skip this rule. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 
 ## Sliding Window
 
@@ -130,11 +130,10 @@ As time progresses within the current window, the previous window's contribution
 $config->throttles->sliding('api-sliding',
     limit: 100,
     period: 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
-The method signature is identical to `add()` -- the only difference is the internal algorithm. Sliding windows also support dynamic `limit` and `period` closures.
+The method signature is identical to `add()`; the only difference is the internal algorithm. Sliding windows also support dynamic `limit` and `period` closures.
 
 ### Fixed vs. Sliding Comparison
 
@@ -146,7 +145,7 @@ The method signature is identical to `add()` -- the only difference is the inter
 | Best for | Simple rate limiting, internal APIs | Public APIs, strict limit enforcement |
 
 ::: tip
-The sliding window algorithm is not atomic under high concurrency -- a small number of requests may slip through at the exact moment the threshold is crossed. This is acceptable for rate limiting, which is a fairness mechanism, not a security boundary. For hard security limits, use [Fail2Ban](/features/fail2ban) or [Allow2Ban](/features/fail2ban#allow2ban).
+The sliding window algorithm is not atomic under high concurrency; a small number of requests may slip through at the exact moment the threshold is crossed. This is acceptable for rate limiting, which is a fairness mechanism, not a security boundary. For hard security limits, use [Fail2Ban](/features/fail2ban) or [Allow2Ban](/features/fail2ban#allow2ban).
 :::
 
 ## Multi-Window Throttling
@@ -160,7 +159,7 @@ Register multiple time windows under a single logical name with `multi()`. This 
 $config->throttles->multi('api', [
     1  => 3,    // 3 requests per second (burst protection)
     60 => 100,  // 100 requests per minute (sustained limit)
-], KeyExtractors::ip());
+]);
 ```
 
 A request is blocked if it exceeds **any** window's limit. Windows are evaluated from shortest to longest period.
@@ -171,7 +170,7 @@ A request is blocked if it exceeds **any** window's limit. Windows are evaluated
 $config->throttles->multi(
     string $name,
     array $windowLimits,   // array<int period, int limit>
-    Closure $key,
+    ?Closure $key = null,
 ): ThrottleSection
 ```
 
@@ -179,14 +178,14 @@ $config->throttles->multi(
 |-----------|------|-------------|
 | `$name` | `string` | Base name. Sub-rules are named `{name}:{period}s`. |
 | `$windowLimits` | `array<int, int>` | Map of period (seconds) to limit (max requests). Must not be empty. |
-| `$key` | `Closure` | Key extractor, shared across all sub-rules. |
+| `$key` | `?Closure` | Key extractor, shared across all sub-rules. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 
 ### Naming Convention
 
 Sub-rules follow the pattern `{name}:{period}s`:
 
 ```php
-$config->throttles->multi('api', [1 => 5, 60 => 100, 3600 => 2000], KeyExtractors::ip());
+$config->throttles->multi('api', [1 => 5, 60 => 100, 3600 => 2000]);
 
 // Creates three rules:
 // - "api:1s"    -> 5 req/s
@@ -205,7 +204,7 @@ $config->throttles->multi('public-api', [
     1    => 10,     // 10 req/s burst cap
     60   => 300,    // 300 req/min sustained
     3600 => 5000,   // 5000 req/hour daily budget
-], KeyExtractors::ip());
+]);
 ```
 
 ## Per-User Tier Limits
@@ -218,15 +217,14 @@ Use a single rule with a dynamic limit. This is simpler and requires less config
 
 ```php
 $config->throttles->add('api',
-    limit: fn(ServerRequestInterface $request): int => match ($request->getHeaderLine('X-Plan')) {
+    limit: fn(ServerRequestInterface $request): int => match ($request->getAttribute('plan')) {
         'enterprise' => 10000,
         'pro' => 1000,
         'free' => 100,
         default => 50,
     },
     period: 60,
-    key: fn($request): ?string => $request->getHeaderLine('X-User-Id')
-        ?: $request->getServerParams()['REMOTE_ADDR'] ?? null,
+    key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
 
@@ -239,8 +237,8 @@ Create separate rules and use the key closure returning `null` to skip:
 $config->throttles->add('free-tier',
     limit: 100, period: 60,
     key: function ($request): ?string {
-        if ($request->getHeaderLine('X-Plan') !== 'free') return null;
-        return $request->getHeaderLine('X-User-Id') ?: null;
+        if ($request->getAttribute('plan') !== 'free') return null;
+        return $request->getAttribute('userId');
     },
 );
 
@@ -248,8 +246,8 @@ $config->throttles->add('free-tier',
 $config->throttles->add('pro-tier',
     limit: 1000, period: 60,
     key: function ($request): ?string {
-        if ($request->getHeaderLine('X-Plan') !== 'pro') return null;
-        return $request->getHeaderLine('X-User-Id') ?: null;
+        if ($request->getAttribute('plan') !== 'pro') return null;
+        return $request->getAttribute('userId');
     },
 );
 
@@ -257,14 +255,14 @@ $config->throttles->add('pro-tier',
 $config->throttles->add('anonymous',
     limit: 50, period: 60,
     key: function ($request): ?string {
-        if ($request->getHeaderLine('X-User-Id') !== '') return null;
+        if ($request->getAttribute('userId') !== null) return null;
         return $request->getServerParams()['REMOTE_ADDR'] ?? null;
     },
 );
 ```
 
-::: tip
-Your authentication middleware should set `X-User-Id` and `X-Plan` headers on the PSR-7 request before it reaches the Phirewall middleware. This keeps rate limiting configuration clean and decoupled from authentication logic.
+::: tip Read tier and identity from request attributes, not headers
+`plan` and `userId` here are PSR-7 request **attributes**, set by your authentication middleware after it verifies the principal: `$request = $request->withAttribute('plan', $user->plan)`. Attributes live only on the server-side request object and are never part of the incoming HTTP message, so a client cannot forge them the way it could an `X-Plan` header. Place that middleware before Phirewall in the pipeline (Phirewall still runs after your error handler). Only fall back to a header if a separate upstream service sets it, and then strip or overwrite any inbound copy at the trusted edge.
 :::
 
 ## Per-Endpoint Cost
@@ -295,8 +293,8 @@ $config->throttles->add('export-endpoints',
     limit: 10, period: 3600,
     key: function ($request): ?string {
         if (!str_starts_with($request->getUri()->getPath(), '/api/export')) return null;
-        return $request->getHeaderLine('X-User-Id')
-            ?: $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        return $request->getAttribute('userId')
+            ?? ($request->getServerParams()['REMOTE_ADDR'] ?? null);
     },
 );
 ```
@@ -314,7 +312,7 @@ $config->throttles->add('api-limit',
         if (str_starts_with($ip, '10.')) return null;
 
         // Skip for admin users
-        if ($request->getHeaderLine('X-Role') === 'admin') return null;
+        if ($request->getAttribute('role') === 'admin') return null;
 
         // Skip for webhooks
         if (str_starts_with($request->getUri()->getPath(), '/webhooks/')) return null;
@@ -339,15 +337,14 @@ $tierMap = array_column($userTiers, 'plan', 'user_id');
 
 $config->throttles->add('db-tiered',
     limit: fn(ServerRequestInterface $request) use ($tierMap): int =>
-        match ($tierMap[$request->getHeaderLine('X-User-Id')] ?? 'anonymous') {
+        match ($tierMap[$request->getAttribute('userId') ?? ''] ?? 'anonymous') {
             'enterprise' => 10000,
             'pro' => 1000,
             'free' => 100,
             default => 50,
         },
     period: 60,
-    key: fn($request): ?string => $request->getHeaderLine('X-User-Id')
-        ?: $request->getServerParams()['REMOTE_ADDR'] ?? null,
+    key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
 
@@ -396,7 +393,7 @@ $firewall->resetAll();
 
 ## Related Pages
 
-- [Rate Limiting](/features/rate-limiting) -- basic throttle setup and rate limit headers
-- [Observability](/advanced/observability) -- `ThrottleExceeded` events and metrics
-- [Safelists & Blocklists](/features/safelists-blocklists) -- bypass all rules for trusted traffic
-- [Track & Notifications](/advanced/track-notifications) -- passive counting for monitoring
+- [Rate Limiting](/features/rate-limiting) - basic throttle setup and rate limit headers
+- [Observability](/advanced/observability) - `ThrottleExceeded` events and metrics
+- [Safelists & Blocklists](/features/safelists-blocklists) - bypass all rules for trusted traffic
+- [Track & Notifications](/advanced/track-notifications) - passive counting for monitoring

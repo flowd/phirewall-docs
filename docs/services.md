@@ -6,15 +6,15 @@ outline: deep
 
 ## About Flowd GmbH
 
-**Flowd GmbH** is not a generic full-service agency — we are a highly specialized partner for custom application solutions in the B2B space. Since our founding in 2018, we have been building tailored software for mid-market companies and enterprises — efficient, stable, and with long-term support.
+**Flowd GmbH** is not a generic full-service agency; we are a highly specialized partner for custom application solutions in the B2B space. Since our founding in 2018, we have been building tailored software for mid-market companies and enterprises: efficient, stable, and with long-term support.
 
 Founded by **Sascha Egerer** and **Felix Tscheulin**, our team consists of six experienced software engineers and IT consultants who work closely together with minimal organizational overhead.
 
 ### What sets us apart
 
-- **Management = Developers** — Decisions are made by those who write the code. Our leadership team are trained computer scientists who are responsible for projects both technically and organizationally.
-- **Lean structures, high quality** — No layers of project managers between you and the engineers.
-- **Long-term partnerships** — We support our clients over many years and take responsibility for the solutions we build.
+- **Management = Developers**: Decisions are made by those who write the code. Our leadership team are trained computer scientists who are responsible for projects both technically and organizationally.
+- **Lean structures, high quality**: No layers of project managers between you and the engineers.
+- **Long-term partnerships**: We support our clients over many years and take responsibility for the solutions we build.
 
 ## Our Services
 
@@ -74,7 +74,7 @@ Unified digital platform for multi-brand, multi-country website operations. Cust
 
 Development of the Paperless API with Ruby on Rails. Architecture, security consulting, eIDAS 2.0 certification support.
 
-### Mankido — Marketing Website
+### Mankido - Marketing Website
 *TYPO3 CMS*
 
 Design and development of the Mankido marketing website on TYPO3, providing a flexible content management platform for brand communication.
@@ -82,8 +82,8 @@ Design and development of the Mankido marketing website on TYPO3, providing a fl
 ## How We Work
 
 - **Long-term partnerships** over one-off projects
-- **Direct, technical communication** — no classic project managers, just senior engineers
-- **Transparency & responsibility** — open error culture, clear budgets, accountability in operations
+- **Direct, technical communication**: no classic project managers, just senior engineers
+- **Transparency & responsibility**: open error culture, clear budgets, accountability in operations
 
 ## Get in Touch
 

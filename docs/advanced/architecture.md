@@ -4,7 +4,7 @@ outline: deep
 
 # Architecture
 
-Phirewall's core decision engine uses an **evaluator pipeline** -- a sequential chain of single-responsibility evaluator classes, each handling one type of firewall rule. The pipeline processes every request and short-circuits on the first decisive result.
+Phirewall's core decision engine uses an **evaluator pipeline**, a sequential chain of single-responsibility evaluator classes, each handling one type of firewall rule. The pipeline processes every request and short-circuits on the first decisive result.
 
 ## Evaluator Pipeline
 
@@ -14,7 +14,7 @@ When `Firewall::decide()` is called, it creates an `EvaluationContext` and passe
 Request
   |
   v
-TrackEvaluator         (passive counting -- always continues)
+TrackEvaluator         (passive counting, always continues)
   |
   v
 SafelistEvaluator      (match? --> allow, skip remaining)
@@ -74,8 +74,8 @@ The `EvaluationContext` is a mutable transport object that carries shared config
 
 The context also provides helper methods:
 
-- `dispatch(object $event): void` -- dispatches a PSR-14 event if a dispatcher is configured
-- `responseHeaders(string $type, string $rule): array` -- builds `X-Phirewall` response headers when enabled
+- `dispatch(object $event): void` - dispatches a PSR-14 event if a dispatcher is configured
+- `responseHeaders(string $type, string $rule): array` - builds `X-Phirewall` response headers when enabled
 
 ## Evaluators
 
@@ -95,7 +95,7 @@ Checks blocklist rules. On the first match, dispatches `BlocklistMatched`, sets 
 
 For each fail2ban rule:
 
-1. Checks if the key is already banned -- if so, returns a blocked result immediately
+1. Checks if the key is already banned - if so, returns a blocked result immediately
 2. If the filter matches, increments the failure counter and bans if the threshold is reached
 
 Both the pre-handler path (during `decide()`) and the post-handler path (via `processRecordedSignal()`) use the same `count >= threshold` comparison: the Nth matching request triggers the ban and is itself blocked. This matches rack-attack's `maxretry` semantics and is consistent with Allow2Ban.
@@ -136,13 +136,13 @@ The order is optimized so cheap checks run before expensive ones, and passive tr
 
 ## Performance
 
-The evaluator pipeline adds no measurable overhead compared to the previous monolithic implementation. Each evaluator is a lightweight, stateless object (except `Fail2BanEvaluator`, which is retained for post-handler failure processing). The pipeline iterates a fixed-size array with early exit on the first decisive result.
+The evaluator pipeline adds negligible overhead. Each evaluator is a lightweight object; the `Fail2BanEvaluator` and `Allow2BanEvaluator` are additionally retained on the firewall so post-handler signal processing can reuse them. The pipeline iterates a fixed-size array with early exit on the first decisive result.
 
 Performance timing for every `decide()` call is captured in the `PerformanceMeasured` event, which includes the `DecisionPath` and `durationMicros`. See [Observability](/advanced/observability#performancemeasured) for details.
 
 ## Related Pages
 
-- [Observability](/advanced/observability) -- PSR-14 events, diagnostics counters, performance monitoring
-- [Request Context](/advanced/request-context) -- post-handler failure signaling for Fail2Ban
-- [Rate Limiting](/features/rate-limiting) -- throttle rules, sliding windows, and multi-throttle
-- [Fail2Ban & Allow2Ban](/features/fail2ban) -- automatic banning configuration
+- [Observability](/advanced/observability) - PSR-14 events, diagnostics counters, performance monitoring
+- [Request Context](/advanced/request-context) - post-handler failure signaling for Fail2Ban
+- [Rate Limiting](/features/rate-limiting) - throttle rules, sliding windows, and multi-throttle
+- [Fail2Ban & Allow2Ban](/features/fail2ban) - automatic banning configuration

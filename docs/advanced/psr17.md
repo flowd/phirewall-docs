@@ -8,8 +8,8 @@ Phirewall generates HTTP responses (`403 Forbidden`, `429 Too Many Requests`) wh
 
 There are two layers of response customization:
 
-1. **Base response factory** -- the `ResponseFactoryInterface` used by the `Middleware` to create bare responses (status code + headers). Auto-detected or injected explicitly.
-2. **Custom response factories** -- optional `BlocklistedResponseFactoryInterface` and `ThrottledResponseFactoryInterface` on `Config` that produce complete responses with body text, content negotiation, etc.
+1. **Base response factory** - the `ResponseFactoryInterface` used by the `Middleware` to create bare responses (status code + headers). Auto-detected or injected explicitly.
+2. **Custom response factories** - optional `BlocklistedResponseFactoryInterface` and `ThrottledResponseFactoryInterface` on `Config` that produce complete responses with body text, content negotiation, etc.
 
 ## Auto-Detection
 
@@ -328,7 +328,7 @@ $config->usePsr17Responses($psr17, $psr17);
 $config->blocklistedResponseFactory = new Psr17BlocklistedResponseFactory(
     $psr17,
     $psr17,
-    'Access Denied -- your request has been blocked.',
+    'Access Denied - your request has been blocked.',
 );
 $config->throttledResponseFactory = new Psr17ThrottledResponseFactory(
     $psr17,
@@ -340,7 +340,7 @@ $config->throttledResponseFactory = new Psr17ThrottledResponseFactory(
 $config->blocklists->add('admin',
     fn($req) => str_starts_with($req->getUri()->getPath(), '/admin')
 );
-$config->throttles->add('ip', 100, 60, KeyExtractors::ip());
+$config->throttles->add('ip', 100, 60);
 
 // Create middleware (also pass PSR-17 factory for base responses)
 $middleware = new Middleware($config, $psr17);
@@ -438,7 +438,6 @@ $this->app->singleton(Middleware::class, function ($app) {
     );
     $config->throttles->add('global',
         limit: 100, period: 60,
-        key: KeyExtractors::ip()
     );
 
     return new Middleware($config, $psr17);
@@ -475,7 +474,7 @@ $psr17 = new Psr17Factory();
 $config->usePsr17Responses($psr17, $psr17);
 // ... configure rules ...
 
-// Mezzio uses PSR-15 natively -- pipe first
+// Mezzio uses PSR-15 natively - pipe first
 $app->pipe(new Middleware($config, $psr17));
 ```
 

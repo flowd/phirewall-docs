@@ -8,7 +8,7 @@ Phirewall can mirror application-level blocks to web server infrastructure, prov
 
 ## Why Infrastructure-Level Blocking?
 
-Application-level firewalls run inside PHP, which means every blocked request still consumes PHP-FPM resources. By mirroring bans to the web server layer (Apache, Nginx), subsequent requests from banned IPs are rejected before reaching PHP -- saving CPU, memory, and reducing attack surface.
+Application-level firewalls run inside PHP, which means every blocked request still consumes PHP-FPM resources. By mirroring bans to the web server layer (Apache, Nginx), subsequent requests from banned IPs are rejected before reaching PHP, saving CPU, memory, and reducing attack surface.
 
 ```text
 Request --> Web Server (.htaccess) --> PHP-FPM --> Phirewall Middleware
@@ -104,7 +104,7 @@ RewriteRule ^(.*)$ index.php [L]
 # BEGIN Phirewall
 Require not ip 192.168.1.101
 Require not ip 10.0.0.50
-Require not ip 2001:db8::1
+Require not ip 2001:db8::5
 # END Phirewall
 
 # More custom rules (preserved)
@@ -113,11 +113,11 @@ Options -Indexes
 
 ### Safety Features
 
-- **Atomic writes** -- writes to a temporary file first, then renames it (POSIX atomic operation), preserving permissions
-- **IP validation** -- all IPs are validated with `filter_var()` before writing; IPv6 addresses are normalized to canonical form to prevent duplicates
-- **Content preservation** -- only the managed section between markers is modified; all other `.htaccess` content is untouched
-- **Idempotent operations** -- blocking an already-blocked IP is a no-op; duplicates in batch operations are deduplicated
-- **All-or-nothing semantics** -- in `blockMany()`/`unblockMany()`, all IPs are validated before any file modification; if one IP is invalid, the entire operation is rejected
+- **Atomic writes** - writes to a temporary file first, then renames it (POSIX atomic operation), preserving permissions
+- **IP validation** - all IPs are validated with `filter_var()` before writing; IPv6 addresses are normalized to canonical form to prevent duplicates
+- **Content preservation** - only the managed section between markers is modified; all other `.htaccess` content is untouched
+- **Idempotent operations** - blocking an already-blocked IP is a no-op; duplicates in batch operations are deduplicated
+- **All-or-nothing semantics** - in `blockMany()`/`unblockMany()`, all IPs are validated before any file modification; if one IP is invalid, the entire operation is rejected
 
 ## Automatic Event Integration
 
@@ -138,8 +138,8 @@ new InfrastructureBanListener(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `$infrastructureBlocker` | `InfrastructureBlockerInterface` | -- | The adapter to push blocks to |
-| `$nonBlockingRunner` | `NonBlockingRunnerInterface` | -- | How to execute the adapter call |
+| `$infrastructureBlocker` | `InfrastructureBlockerInterface` | - | The adapter to push blocks to |
+| `$nonBlockingRunner` | `NonBlockingRunnerInterface` | - | How to execute the adapter call |
 | `$blockOnFail2Ban` | `bool` | `true` | Mirror Fail2Ban bans |
 | `$blockOnBlocklist` | `bool` | `false` | Mirror blocklist hits (request IP) |
 | `$keyToIp` | `?callable` | identity | Map a Fail2Ban key to an IP (default: assumes key is an IP) |
@@ -424,13 +424,11 @@ $config->fail2ban->add('login-abuse',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip()
 );
 
 // Standard rate limiting
 $config->throttles->add('global',
     limit: 100, period: 60,
-    key: KeyExtractors::ip()
 );
 
 $middleware = new Middleware($config);

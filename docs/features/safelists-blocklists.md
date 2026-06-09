@@ -31,7 +31,7 @@ $config->safelists->add(string $name, Closure $callback): SafelistSection
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier |
-| `$callback` | `Closure` | `fn(ServerRequestInterface): bool` -- return `true` to safelist |
+| `$callback` | `Closure` | `fn(ServerRequestInterface): bool` - return `true` to safelist |
 
 ```php
 // Health check endpoint
@@ -107,7 +107,7 @@ $config->safelists->trustedBots(
 ```
 
 ```php
-// Safelist Google, Bing, Baidu, DuckDuckGo, Yandex, and Apple bots
+// Safelist Google, Bing, Yahoo, Baidu, DuckDuckGo, Yandex, and Apple bots
 $config->safelists->trustedBots();
 
 // Add custom bots on top of the built-in list
@@ -151,7 +151,7 @@ $config->blocklists->add(string $name, Closure $callback): BlocklistSection
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier |
-| `$callback` | `Closure` | `fn(ServerRequestInterface): bool` -- return `true` to block |
+| `$callback` | `Closure` | `fn(ServerRequestInterface): bool` - return `true` to block |
 
 ```php
 // Block admin panel probes
@@ -222,10 +222,10 @@ $config->blocklists->knownScanners(
 | `$name` | `string` | Rule identifier (default: `'known-scanners'`) |
 | `$patterns` | `?list<string>` | UA substrings to block. `null` uses the built-in list |
 
-The built-in list covers: sqlmap, nikto, nmap, masscan, zmeu, havij, acunetix, nessus, openvas, w3af, dirbuster, gobuster, wfuzz, hydra, medusa, burpsuite, skipfish, whatweb, metasploit, nuclei, ffuf, feroxbuster, joomscan, and wpscan.
+The built-in list covers: sqlmap, nikto, nmap, masscan, zmeu, havij, acunetix, nessus, openvas, w3af, dirbuster, gobuster, wfuzz, hydra, medusa, burpsuite, skipfish, whatweb, metasploit, nuclei, ffuf, feroxbuster, joomscan, and wpscan (26 substring patterns in total; Burp Suite and Metasploit are each matched under two spellings).
 
 ```php
-// Use defaults -- blocks 24+ known attack tools
+// Use defaults: blocks 24 known attack tools
 $config->blocklists->knownScanners();
 
 // Add custom patterns on top of defaults
@@ -248,14 +248,14 @@ Block requests missing standard HTTP headers that real browsers typically send. 
 ```php
 $config->blocklists->suspiciousHeaders(
     string $name = 'suspicious-headers',
-    array $requiredHeaders = []
+    ?array $requiredHeaders = null
 ): BlocklistSection
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Rule identifier (default: `'suspicious-headers'`) |
-| `$requiredHeaders` | `list<string>` | Headers that must be present. Empty uses defaults |
+| `$requiredHeaders` | `?list<string>` | Headers that must be present. `null` uses the default set (`Accept`, `Accept-Language`, `Accept-Encoding`). A non-null list replaces the defaults entirely; do NOT pass `[]` expecting defaults (it requires zero headers and never matches) |
 
 Default required headers: `Accept`, `Accept-Language`, `Accept-Encoding`.
 
@@ -316,6 +316,10 @@ The file format is one entry per line, with optional expiry and timestamp fields
 203.0.113.50|1711929600|1711843200
 ```
 
+::: warning Protect the blocklist file
+This file holds live security state. Store it **outside your web document root** and restrict access to the application user (e.g. `0750` directory, `0640` file). A world-readable copy leaks every banned/blocked address; a writable one lets a local attacker edit the list, including removing their own ban.
+:::
+
 ### OWASP Core Rule Set
 
 Register OWASP CRS rules as a blocklist to detect SQL injection, XSS, and other attacks:
@@ -335,7 +339,7 @@ See [OWASP CRS](/features/owasp-crs) for full details on loading rules from file
 
 ## Pattern Backends
 
-For dynamic, data-driven blocklists, use pattern backends instead of hardcoded closures. Pattern backends support IP addresses, CIDR ranges, path patterns, header patterns, and regex matching -- all with optional expiration.
+For dynamic, data-driven blocklists, use pattern backends instead of hardcoded closures. Pattern backends support IP addresses, CIDR ranges, path patterns, header patterns, and regex matching, all with optional expiration.
 
 ### In-Memory Pattern Blocklist
 
@@ -376,6 +380,10 @@ $backend->append(new PatternEntry(
     expiresAt: time() + 3600,  // Auto-expires after 1 hour
 ));
 ```
+
+::: warning Protect the blocklist file
+This file holds live security state. Store it **outside your web document root** and restrict access to the application user (e.g. `0750` directory, `0640` file). A world-readable copy leaks every banned/blocked address; a writable one lets a local attacker edit the list, including removing their own ban.
+:::
 
 ### Two-Step Registration
 
@@ -464,6 +472,10 @@ $entries = array_map(
 $config->blocklists->patternBlocklist('threat-intel', $entries);
 ```
 
+::: tip
+Pattern backends are also the serializable, database-friendly equivalent of file-backed lists. To keep a block catalogue outside code (in a settings table or config service) and hot-reload it on change, express it as a [Portable Config](/advanced/portable-config).
+:::
+
 ## IP Resolution {#ip-resolution}
 
 Both `safelists->ip()` and `blocklists->ip()` respect the global IP resolver set on the Config object. This is important when your application runs behind a reverse proxy or load balancer.
@@ -489,8 +501,15 @@ $customResolver = fn($req) => $req->getHeaderLine('CF-Connecting-IP') ?: null;
 $config->safelists->ip('cloudflare-office', '203.0.113.10', ipResolver: $customResolver);
 ```
 
-::: warning
-Never trust `X-Forwarded-For` without configuring trusted proxies. An attacker can spoof this header to bypass IP-based rules.
+### IPv6 canonicalization
+
+`IpMatcher` (which backs `safelists->ip()` and `blocklists->ip()`) canonicalizes addresses before matching, so you write each rule once:
+
+- An **IPv4-mapped IPv6** peer such as `::ffff:203.0.113.7` (the form dual-stack PHP-FPM pools often surface for IPv4 clients) collapses to its embedded IPv4 form. A rule written as `203.0.113.7` (or a CIDR like `203.0.113.0/24`) matches it, and an attacker cannot slip past an IPv4 blocklist entry by presenting the mapped form.
+- **Alternate IPv6 spellings** (expanded `2001:0db8:0:0:0:0:0:1` vs compressed `2001:db8::1`, upper vs lower case) all resolve to one canonical identity, so a rule in any spelling matches all of them.
+
+::: danger
+`KeyExtractors::ip()` reads raw `REMOTE_ADDR`; behind a proxy or CDN that is the proxy's address, so IP rules match the proxy rather than the client. Set a client-IP resolver (above) in that case. And never trust `X-Forwarded-For` without configuring trusted proxies; an attacker can otherwise spoof this header to bypass IP-based rules. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
 :::
 
 ## Evaluation Order
@@ -500,11 +519,12 @@ The complete evaluation order within Phirewall is:
 | Order | Layer | Action on Match |
 |-------|-------|-----------------|
 | 1 | Track | Count (passive, never blocks) |
-| 2 | **Safelist** | **Allow** -- bypass all remaining checks |
-| 3 | **Blocklist** | **Block** -- 403 Forbidden |
-| 4 | Fail2Ban | Block -- 403 Forbidden |
-| 5 | Throttle | Block -- 429 Too Many Requests |
-| 6 | Pass | Request reaches your application |
+| 2 | **Safelist** | **Allow** - bypass all remaining checks |
+| 3 | **Blocklist** | **Block** - 403 Forbidden |
+| 4 | Fail2Ban | Block - 403 Forbidden |
+| 5 | Throttle | Block - 429 Too Many Requests |
+| 6 | Allow2Ban | Block - 403 Forbidden |
+| 7 | Pass | Request reaches your application |
 
 ::: warning
 Rules within each layer are evaluated in the order they were added. Place more specific rules before general ones if ordering matters.

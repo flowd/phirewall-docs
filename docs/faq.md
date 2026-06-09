@@ -16,7 +16,8 @@ Phirewall works with any PSR-15 (PHP Standard Recommendation for HTTP Server Mid
 
 - **Slim** (4.x+)
 - **Mezzio** (Laminas)
-- **Laravel** (via PSR-15 bridge or `nyholm/psr7`)
+- **TYPO3** (via an extension middleware)
+- **Laravel** (via `symfony/psr-http-message-bridge` + `nyholm/psr7`)
 - **Symfony** (via `symfony/psr-http-message-bridge`)
 - **Spiral**
 - **Any custom PSR-15 middleware stack**
@@ -62,13 +63,13 @@ Phirewall is dual licensed under LGPL-3.0-or-later and a proprietary license. Se
 
 Phirewall evaluates rules in a strict, deterministic order. The first match wins:
 
-1. **Track** -- passive counting, never blocks
-2. **Safelist** -- if matched, bypass all other checks (returns 200)
-3. **Blocklist** -- if matched, returns 403 Forbidden
-4. **Fail2Ban** -- if already banned, 403; if filter matches, increment failure counter
-5. **Throttle** -- if counter exceeds limit, returns 429 Too Many Requests
-6. **Allow2Ban** -- if threshold exceeded, returns 403
-7. **Pass** -- request reaches your application
+1. **Track**: passive counting, never blocks
+2. **Safelist**: if matched, bypass all other checks (returns 200)
+3. **Blocklist**: if matched, returns 403 Forbidden
+4. **Fail2Ban**: if already banned, 403; if filter matches, increment the failure counter
+5. **Throttle**: if counter exceeds limit, returns 429 Too Many Requests
+6. **Allow2Ban**: if threshold exceeded, returns 403
+7. **Pass**: request reaches your application
 
 ### How do I handle trusted proxies?
 
@@ -84,7 +85,7 @@ $proxy = new TrustedProxyResolver([
     '192.168.0.0/16',  // Private ranges
 ]);
 
-// Apply globally to all rules that use KeyExtractors::ip()
+// Default client-IP resolution for every rule added without an explicit key
 $config->setIpResolver(KeyExtractors::clientIp($proxy));
 ```
 
@@ -96,8 +97,16 @@ $config->throttles->add('api', limit: 100, period: 60,
 );
 ```
 
+A few details worth knowing:
+
+- **`allowedHeaders` defaults to `['X-Forwarded-For']`** (a single header). If your stack emits the RFC 7239 `Forwarded` header, pass it explicitly: `new TrustedProxyResolver([...], ['Forwarded'])`.
+- **All `X-Forwarded-For` / `Forwarded` instances are folded into one chain**, which the resolver walks right to left, returning the first hop not in your trusted-proxy list. The protection is this trusted-hop walk (and reading proxy headers only when the direct peer is itself trusted), not discarding duplicate lines.
+- **IPv6 is canonicalized**: IPv4-mapped peers (`::ffff:1.2.3.4`) match IPv4 rules, and alternate IPv6 spellings are treated as one identity by `ip()` / CIDR list matching (rate-limit and ban keys use the spelling the resolver returns).
+
+See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies) for the full behavior.
+
 ::: danger
-Never trust `X-Forwarded-For` without configuring trusted proxies. An attacker can spoof this header to bypass rate limiting.
+`KeyExtractors::ip()` reads `REMOTE_ADDR`, which behind a CDN or load balancer is the *proxy's* address, so every client collapses onto one key. Always install a client-IP resolver in that case. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting.
 :::
 
 ### What happens when the cache backend is unavailable?
@@ -176,27 +185,9 @@ $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 $context?->recordFailure('login-failures');
 ```
 
-The second argument to `recordFailure()` is optional -- when omitted, the firewall extracts the discriminator key from the rule's own `keyExtractor`. The matching Fail2Ban rule should use `filter: fn($request): bool => false` so it only counts failures signaled programmatically.
+The second argument to `recordFailure()` is optional; when omitted, the firewall extracts the discriminator key from the rule's own `keyExtractor`. The matching Fail2Ban rule should use `filter: fn($request): bool => false` so it only counts failures signaled programmatically.
 
-For allow2ban rules, use `$context->recordHit('rule-name')` -- same shape, routed through the allow2ban evaluator instead.
-
-### The old fluent API methods are gone — what do I use now?
-
-The deprecated convenience methods (`$config->safelist()`, `$config->throttle()`, etc.) have been removed. Use the section API instead:
-
-```php
-// Old (removed)
-$config->safelist('health', fn($request) => ...);
-$config->throttle('ip', 100, 60, fn($request) => ...);
-$config->fail2ban('login', 5, 300, 3600, filter: ..., key: ...);
-
-// New (section API)
-$config->safelists->add('health', fn($request) => ...);
-$config->throttles->add('ip', 100, 60, fn($request) => ...);
-$config->fail2ban->add('login', threshold: 5, period: 300, banSeconds: 3600, filter: ..., key: ...);
-```
-
-See the [Getting Started](/getting-started) guide for the full section API reference.
+For allow2ban rules, use `$context->recordHit('rule-name')`, same shape, routed through the allow2ban evaluator instead.
 
 ## Rate Limiting
 
@@ -204,9 +195,9 @@ See the [Getting Started](/getting-started) guide for the full section API refer
 
 Phirewall supports three throttling strategies:
 
-- **Fixed window** (`add()`) -- time is divided into fixed intervals. Simple and fast, but allows double bursts at period boundaries.
-- **Sliding window** (`sliding()`) -- uses a weighted average of current and previous window to provide smooth rate enforcement. Prevents the "double burst" problem.
-- **Multi-window** (`multi()`) -- registers multiple time windows in a single call. Useful for setting both burst limits (short window) and sustained limits (long window).
+- **Fixed window** (`add()`): time is divided into fixed intervals. Simple and fast, but allows double bursts at period boundaries.
+- **Sliding window** (`sliding()`): uses a weighted average of current and previous window to provide smooth rate enforcement. Prevents the "double burst" problem.
+- **Multi-window** (`multi()`): registers multiple time windows in a single call. Useful for setting both burst limits (short window) and sustained limits (long window).
 
 See [Dynamic Throttle](/advanced/dynamic-throttle) for details.
 
@@ -215,7 +206,7 @@ See [Dynamic Throttle](/advanced/dynamic-throttle) for details.
 Use sliding window throttling:
 
 ```php
-$config->throttles->sliding('api', limit: 100, period: 60, key: KeyExtractors::ip());
+$config->throttles->sliding('api', limit: 100, period: 60);
 ```
 
 Or combine multiple fixed windows with `multi()`:
@@ -224,12 +215,12 @@ Or combine multiple fixed windows with `multi()`:
 $config->throttles->multi('api', [
     1  => 3,    // 3 req/s burst protection
     60 => 100,  // 100 req/min sustained limit
-], KeyExtractors::ip());
+]);
 ```
 
 ### What happens when a throttle key returns `null`?
 
-The rule is **skipped entirely** for that request -- as if the rule did not exist. This is the primary mechanism for conditional rate limits. For example, return `null` for admin users to exempt them from rate limiting.
+The rule is **skipped entirely** for that request, as if the rule did not exist. This is the primary mechanism for conditional rate limits. For example, return `null` for admin users to exempt them from rate limiting.
 
 ### Are rate limit counters atomic?
 
@@ -247,16 +238,17 @@ Yes. Use a dynamic `limit` closure:
 
 ```php
 $config->throttles->add('api',
-    limit: fn($request): int => match ($request->getHeaderLine('X-Plan')) {
+    limit: fn($request): int => match ($request->getAttribute('plan')) {
         'enterprise' => 10000,
         'pro' => 1000,
         default => 100,
     },
     period: 60,
-    key: fn($request): ?string => $request->getHeaderLine('X-User-Id')
-        ?: $request->getServerParams()['REMOTE_ADDR'] ?? null,
+    key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
+
+`plan` is a PSR-7 request **attribute** your authentication middleware sets after verifying the principal (`$request->withAttribute('plan', ...)`), not a client header a caller could forge. Place that middleware before Phirewall in the pipeline.
 
 See [Dynamic Throttle: Per-User Tier Limits](/advanced/dynamic-throttle#per-user-tier-limits) for more patterns.
 
@@ -269,6 +261,7 @@ See [Dynamic Throttle: Per-User Tier Limits](/advanced/dynamic-throttle#per-user
 | Testing / Development | `InMemoryCache` | No dependencies, resets each request |
 | Single server | `ApcuCache` | Sub-microsecond, shared across PHP-FPM workers |
 | Multiple servers | `RedisCache` | Shared state, atomic operations |
+| Long-running workers (Swoole, RoadRunner, FrankenPHP, Octane) | `RedisCache` (or `PdoCache`) | Each worker is a separate process; avoid `InMemoryCache` and `ApcuCache`, whose state fragments across workers |
 | Kubernetes / Docker | `RedisCache` | Containers are ephemeral, need external state |
 | Serverless | `RedisCache` (external) | Function instances are short-lived |
 | No Redis available | `PdoCache` | MySQL, PostgreSQL, or SQLite |
@@ -277,15 +270,18 @@ See [Storage Backends](/features/storage) for a detailed comparison.
 
 ### Can I use Symfony Cache or Laravel Cache?
 
-Yes. Phirewall accepts any PSR-16 (PHP Standard Recommendation for Simple Caching) compatible implementation. However, generic PSR-16 caches may have non-atomic counter increments. For production, prefer the bundled `RedisCache` or `ApcuCache` for accuracy.
+Yes, Phirewall accepts any PSR-16 (PHP Standard Recommendation for Simple Caching) compatible implementation, but note that most host-framework caches are **not** PSR-16 out of the box: Laravel's `Cache` repository (`Illuminate\Contracts\Cache\Repository`) and TYPO3's caching framework (`FrontendInterface`) are not `Psr\SimpleCache\CacheInterface`, so passing one directly to `Config` is a type error. Symfony Cache exposes a PSR-16 adapter (`Symfony\Component\Cache\Psr16Cache`) you can wrap a pool in. For production, prefer the bundled `RedisCache` or `ApcuCache`: they implement `CounterStoreInterface` for atomic increments, whereas a generic PSR-16 cache may have non-atomic counter increments.
 
 ### Why does InMemoryCache not work in production?
 
 In PHP-FPM (FastCGI Process Manager), each request starts a new process (or reuses one from the pool). The in-memory cache is empty at the start of each request, so counters always reset to zero. This means rate limits and ban counters never accumulate.
 
+Under long-running worker runtimes (Swoole, RoadRunner, FrankenPHP worker mode, Octane) the failure is the opposite and easy to miss: the array survives across requests within a worker, so a single-worker demo looks like it "works", but each worker is a separate process with its own array. State is never shared across workers (counters and bans fragment, so the effective rate limit is roughly N times the configured value) and the array grows for the worker's lifetime.
+
 Solutions:
 - **Single server**: use `ApcuCache` (shared memory across the FPM pool)
 - **Multiple servers**: use `RedisCache` (shared across all servers)
+- **Long-running workers**: use `RedisCache` or `PdoCache` (not `ApcuCache`, whose memory is per process)
 - **Any server**: use `PdoCache` with a database
 
 ## OWASP Rules
@@ -355,7 +351,6 @@ The optional `limit` parameter adds a threshold to your track rule. When set, th
 $config->tracks->add('suspicious-burst',
     period: 60,
     filter: fn($request) => $request->getUri()->getPath() === '/login',
-    key: KeyExtractors::ip(),
     limit: 10, // thresholdReached=true at 10+ hits
 );
 ```
@@ -433,11 +428,21 @@ if ($result->isBlocked()) {
 Use the `Firewall` class:
 
 ```php
+use Flowd\Phirewall\BanType;
+
 $firewall = new Firewall($config);
 
 // Reset a specific throttle counter
 $firewall->resetThrottle('api', '192.168.1.100');
 
+// Lift a specific fail2ban ban (also clears its fail counter)
+$firewall->resetFail2Ban('login-failures', '192.168.1.100');
+
+// Check whether a key is currently banned (BanType is required)
+$banned = $firewall->isBanned('login-failures', '192.168.1.100', BanType::Fail2Ban);
+
 // Reset all counters and bans
 $firewall->resetAll();
 ```
+
+`BanType` is `enum BanType: string { case Allow2Ban = 'allow2ban'; case Fail2Ban = 'fail2ban'; }`.

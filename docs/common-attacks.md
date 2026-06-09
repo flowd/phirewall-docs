@@ -4,60 +4,41 @@ outline: deep
 
 # Common Attacks
 
-Ready-to-use Phirewall configurations for defending against common web application attacks. Each recipe is self-contained -- copy what you need and adapt it to your application.
+Ready-to-use Phirewall configurations for defending against common web application attacks. Each recipe is self-contained: copy what you need and adapt it to your application.
 
 ## Brute Force Login
 
 Protect login endpoints with layered rate limiting and fail2ban.
 
-### Fail2Ban on Login Failures
+### Post-Handler Failure Signaling (recommended)
 
-Ban IPs after repeated failed login attempts. The `filter` predicate determines what counts as a failure:
+The accurate way to ban on *real* failed logins is to record the failure **after** your handler has verified the credentials, using [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext). The fail2ban rule's filter never matches on its own (`fn() => false`); your handler decides what counts as a failure and records it, and the middleware processes the recorded signal once the handler returns. This pattern is demonstrated in [`examples/02-brute-force-protection.php`](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php).
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Context\RequestContext;
 use Flowd\Phirewall\Store\RedisCache;
 use Psr\Http\Message\ServerRequestInterface;
 
 $config = new Config(new RedisCache($redis));
 
-// Ban after 5 failed logins in 5 minutes for 1 hour
-$config->fail2ban->add('login-brute-force',
-    threshold: 5,
-    period: 300,
-    ban: 3600,
-    filter: fn(ServerRequestInterface $req): bool =>
-        $req->getMethod() === 'POST'
-        && $req->getUri()->getPath() === '/login'
-        && $req->getHeaderLine('X-Login-Failed') === '1',
-    key: KeyExtractors::ip(),
-);
-```
-
-Your login handler sets the `X-Login-Failed` header on failed attempts before the response is returned.
-
-### Post-Handler Failure Signaling
-
-For more precise control, use [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext) to signal failures only after verifying credentials:
-
-```php
-use Flowd\Phirewall\Context\RequestContext;
-
+// Ban after 3 verified failures in 5 minutes for 1 hour.
+// The filter never matches; failures are signaled by the handler.
 $config->fail2ban->add('login-failures',
     threshold: 3, period: 300, ban: 3600,
-    filter: fn($req): bool => false, // Never counts automatically
-    key: KeyExtractors::ip(),
+    filter: fn(ServerRequestInterface $req): bool => false,
 );
 
-// In your login handler:
+// In your login handler, AFTER checking credentials:
 if (!$this->authenticate($username, $password)) {
     $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
-    // No second argument needed -- the firewall extracts the key from the
-    // rule's own keyExtractor against this request.
+    // recordFailure's key is optional; with none, the rule resolves the
+    // discriminator itself (here the client IP).
     $context?->recordFailure('login-failures');
 }
 ```
+
+Only genuine failures are counted, so a user who logs in correctly on the first try is never one attempt closer to a ban.
 
 ### Login Endpoint Throttle
 
@@ -85,11 +66,15 @@ $config->throttles->add('account-throttle',
     limit: 5,
     period: 60,
     key: function (ServerRequestInterface $req): ?string {
-        if ($req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST') {
-            $username = $req->getHeaderLine('X-Username');
-            return $username !== '' ? $username : null;
+        if ($req->getMethod() !== 'POST' || $req->getUri()->getPath() !== '/login') {
+            return null;
         }
-        return null;
+        // Key on the submitted credential read from the request body, not a
+        // client-settable header: an attacker could rotate or omit X-Username
+        // to dodge the per-account limit entirely.
+        $body = (array) $req->getParsedBody();
+        $username = $body['username'] ?? $body['email'] ?? null;
+        return $username !== null ? 'user:' . strtolower(trim((string) $username)) : null;
     },
 );
 ```
@@ -239,7 +224,7 @@ Block known attack tools (sqlmap, nikto, nuclei, etc.) with a single call:
 $config->blocklists->knownScanners();
 ```
 
-The default list covers ~25 tools. Extend or replace it:
+The default list covers 24 tools (26 substring patterns). Extend or replace it:
 
 ```php
 use Flowd\Phirewall\Matchers\KnownScannerMatcher;
@@ -303,7 +288,7 @@ Catch both bursts and sustained abuse with multiple time windows:
 $config->throttles->multi('api', [
     1  => 3,    // Burst protection
     60 => 100,  // Sustained limit
-], KeyExtractors::ip());
+]);
 ```
 
 ### Sliding Window
@@ -314,7 +299,6 @@ Prevent the "double burst" problem at fixed-window boundaries:
 $config->throttles->sliding('api',
     limit: 100,
     period: 60,
-    key: KeyExtractors::ip(),
 );
 ```
 
@@ -324,7 +308,7 @@ Apply different limits based on subscription tier:
 
 ```php
 $config->throttles->add('api',
-    limit: fn(ServerRequestInterface $req): int => match ($req->getHeaderLine('X-Plan')) {
+    limit: fn(ServerRequestInterface $req): int => match ($req->getAttribute('plan')) {
         'enterprise' => 10000,
         'pro' => 1000,
         'free' => 100,
@@ -332,9 +316,13 @@ $config->throttles->add('api',
     },
     period: 60,
     key: fn($req): ?string =>
-        $req->getHeaderLine('X-User-Id') ?: $req->getServerParams()['REMOTE_ADDR'] ?? null,
+        $req->getAttribute('userId') ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null),
 );
 ```
+
+::: tip Read tier and identity from request attributes, not headers
+`plan` and `userId` are PSR-7 request **attributes** that your authentication layer sets after verifying the principal: `$request = $request->withAttribute('plan', $user->plan)`. Attributes are server-side only and never part of the incoming request, so a client cannot forge them the way it could an `X-Plan` header. Place the middleware that sets them before Phirewall in the pipeline.
+:::
 
 ### Write Operation Limits
 
@@ -361,23 +349,25 @@ $config->allow2ban->add('volume-ban',
     threshold: 500,
     period: 60,
     banSeconds: 3600,
-    key: KeyExtractors::ip(),
 );
 ```
 
 ## API Abuse
 
-### API Key Throttling
+### API Endpoint Throttling
 
-Rate-limit by API key for authenticated endpoints. `hashedHeader()` stores a sha256 fingerprint of the key in the cache backend rather than the raw value:
+Rate-limit API traffic per client IP, the value a caller cannot forge (behind a proxy, resolve it with `KeyExtractors::clientIp()` and a `TrustedProxyResolver`):
 
 ```php
-$config->throttles->add('api-key',
+$config->throttles->add('api',
     limit: 1000,
     period: 60,
-    key: KeyExtractors::hashedHeader('X-Api-Key'),
 );
 ```
+
+::: warning Header keys are client-controlled
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold (a trivial bypass). Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')`: the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+:::
 
 ### Expensive Endpoint Protection
 
@@ -389,8 +379,8 @@ $config->throttles->add('export',
     period: 3600,
     key: function (ServerRequestInterface $req): ?string {
         if (str_starts_with($req->getUri()->getPath(), '/api/export')) {
-            return $req->getHeaderLine('X-User-Id')
-                ?: $req->getServerParams()['REMOTE_ADDR'] ?? null;
+            return $req->getAttribute('userId')
+                ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null);
         }
         return null;
     },
@@ -405,7 +395,6 @@ Monitor request patterns without blocking, alerting when thresholds are exceeded
 $config->tracks->add('sensitive-endpoints',
     period: 300,
     filter: fn($req): bool => str_starts_with($req->getUri()->getPath(), '/api/admin'),
-    key: KeyExtractors::ip(),
     limit: 50,
 );
 ```
@@ -464,14 +453,16 @@ CRS);
 $config->blocklists->owasp('owasp', $rules);
 
 // ── Layer 4: Fail2Ban ─────────────────────────────────────────────────
+// The filter never matches pre-handler; your login handler signals each
+// verified failure with $context->recordFailure('login-brute-force').
+// See Brute Force Login above.
 $config->fail2ban->add('login-brute-force',
     threshold: 5, period: 300, ban: 3600,
-    filter: fn($req): bool => $req->getHeaderLine('X-Login-Failed') === '1',
-    key: KeyExtractors::ip(),
+    filter: fn($req): bool => false,
 );
 
 // ── Layer 5: Throttling ───────────────────────────────────────────────
-$config->throttles->multi('api', [1 => 5, 60 => 200], KeyExtractors::ip());
+$config->throttles->multi('api', [1 => 5, 60 => 200]);
 $config->throttles->add('login', limit: 10, period: 60, key: function ($req): ?string {
     return $req->getUri()->getPath() === '/login'
         ? ($req->getServerParams()['REMOTE_ADDR'] ?? null)
@@ -481,7 +472,6 @@ $config->throttles->add('login', limit: 10, period: 60, key: function ($req): ?s
 // ── Layer 6: Allow2Ban ────────────────────────────────────────────────
 $config->allow2ban->add('volume-ban',
     threshold: 500, period: 60, banSeconds: 3600,
-    key: KeyExtractors::ip(),
 );
 
 // ── PSR-17 Responses ──────────────────────────────────────────────────
@@ -501,7 +491,7 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 
 | Layer | Purpose | Response |
 |-------|---------|----------|
-| Track | Observe and count (never blocks) | -- |
+| Track | Observe and count (never blocks) | - |
 | Safelist | Bypass all remaining checks | 200 (pass-through) |
 | Blocklist | IP lists, OWASP rules, patterns | 403 |
 | Fail2Ban | Ban after repeated filtered failures | 403 |
@@ -515,7 +505,7 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 
 2. **Safelist your health checks.** Internal monitoring endpoints should bypass all firewall rules to avoid false alerts.
 
-3. **Use `clientIp()` behind proxies.** If your application runs behind a load balancer or CDN, configure a `TrustedProxyResolver` so rate limits and bans apply to the real client IP.
+3. **Use `clientIp()` behind proxies.** If your application runs behind a load balancer or CDN, configure a `TrustedProxyResolver` so rate limits and bans apply to the real client IP; raw `KeyExtractors::ip()` would collapse every client onto the proxy's address. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
 
 4. **Start with logging, then enforce.** Use [Track rules](/advanced/track-notifications) to observe traffic patterns before enabling blocking rules.
 

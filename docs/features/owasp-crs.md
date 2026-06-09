@@ -87,11 +87,27 @@ $skipped = $report['skipped']; // int - Lines that were skipped
 
 | Method | Parameters | Description |
 |--------|-----------|-------------|
-| `fromString()` | `string $rulesText, ?string $contextFolder` | Parse rules from a string |
-| `fromFile()` | `string $filePath` | Load rules from a single file |
-| `fromFiles()` | `list<string> $paths` | Load and merge multiple files |
-| `fromDirectory()` | `string $dir, ?callable $filter` | Load all files in a directory |
-| `fromStringWithReport()` | `string $rulesText` | Parse with statistics |
+| `fromString()` | `string $rulesText, ?string $contextFolder = null, ?int $maxValuesPerCrsVariable = null` | Parse rules from a string |
+| `fromFile()` | `string $filePath, ?int $maxValuesPerCrsVariable = null` | Load rules from a single file |
+| `fromFiles()` | `list<string> $paths, ?int $maxValuesPerCrsVariable = null` | Load and merge multiple files |
+| `fromDirectory()` | `string $dir, ?callable $filter = null, ?int $maxValuesPerCrsVariable = null` | Load all files in a directory |
+| `fromStringWithReport()` | `string $rulesText, ?int $maxValuesPerCrsVariable = null` | Parse with statistics |
+
+## Per-Variable Value Cap (CPU-DoS Guard)
+
+Every `SecRuleLoader` factory accepts an optional trailing `?int $maxValuesPerCrsVariable`. It bounds how many collected values a single CRS variable (such as `ARGS`) may contribute to evaluation, so an attacker cannot drive up per-request WAF cost by submitting thousands of parameters, headers, or cookies. The cap is **per variable**, not aggregate.
+
+```php
+use Flowd\Phirewall\Owasp\SecRuleLoader;
+
+// Cap each CRS variable at 5000 collected values.
+$rules = SecRuleLoader::fromFile('/etc/phirewall/owasp.conf', maxValuesPerCrsVariable: 5000);
+$rules = SecRuleLoader::fromString($rulesText, maxValuesPerCrsVariable: 5000);
+```
+
+- **Default (`null`):** twice PHP's `max_input_vars`, falling back to `2000` (`RequestVariableValues::DEFAULT_MAX_VALUES_PER_CRS_VARIABLE`) when `max_input_vars` is unset or non-positive. Doubling `max_input_vars` sizes the budget to the parameter count the runtime actually accepts (variables such as `ARGS` emit both a name and a value per parameter), so a request PHP can fully parse is never falsely truncated.
+- **Fail-closed:** when a variable's values are truncated at the cap, the affected deny rules fail **closed** (the request is blocked) rather than evaluating a partial value set. An attacker therefore cannot pad a payload past the cap to slip past a deny rule.
+- **Explicit non-positive value throws:** passing an explicit cap below `1` raises `\InvalidArgumentException`, because a non-positive cap would fail every deny rule closed and block all traffic.
 
 ## Supported SecRule Syntax
 
@@ -106,7 +122,7 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `REQUEST_URI` | Full request URI including query string |
 | `REQUEST_METHOD` | HTTP method (GET, POST, etc.) |
 | `QUERY_STRING` | Raw query string |
-| `REQUEST_FILENAME` | Request path without query string |
+| `REQUEST_FILENAME` | Basename (final path segment), without query string |
 | `REQUEST_HEADERS` | All request header values |
 | `REQUEST_HEADERS_NAMES` | Names of all request headers |
 | `REQUEST_COOKIES` | All cookie values |
@@ -132,7 +148,7 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `id:N` | Rule ID (required, must be unique) |
 | `phase:N` | Processing phase (currently informational) |
 | `deny` | Block the request (required for the rule to trigger blocking) |
-| `block` | Alias for `deny` -- both trigger blocking |
+| `block` | Alias for `deny`, both trigger blocking |
 | `msg:'text'` | Human-readable description for logging |
 
 ### Line Continuation
@@ -342,7 +358,7 @@ insert into
 ```
 
 ::: warning
-`@pmFromFile` includes path traversal protection. Paths containing `..` are rejected to prevent loading files outside the rules directory.
+`@pmFromFile` paths are resolved relative to the rule file's directory, and `..` traversal segments are rejected. Treat SecRule files as trusted operator configuration; never build rule text from untrusted input, since the operand selects which file is read.
 :::
 
 ## Architecture
@@ -373,7 +389,7 @@ Each CRS variable maps to a `VariableCollectorInterface` implementation:
 | `REQUEST_URI` | `RequestUriCollector` | Full URI including query string |
 | `REQUEST_METHOD` | `RequestMethodCollector` | HTTP method |
 | `QUERY_STRING` | `QueryStringCollector` | Raw query string |
-| `REQUEST_FILENAME` | `RequestFilenameCollector` | URI path without query string |
+| `REQUEST_FILENAME` | `RequestFilenameCollector` | Basename (final path segment), without query string |
 | `REQUEST_HEADERS` | `RequestHeadersCollector` | All header values |
 | `REQUEST_HEADERS_NAMES` | `RequestHeadersNamesCollector` | Header names |
 | `REQUEST_COOKIES` | `RequestCookiesCollector` | All cookie values |
@@ -396,7 +412,7 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 Unsupported operators resolve to `UnsupportedOperatorEvaluator`, which never matches (safe no-op).
 
 ::: warning ReDoS protection: 8 KiB length guard on `@rx`
-`RegexEvaluator` skips any value whose byte length exceeds 8,192 bytes — the value is treated as non-matching. This is an intentional trade-off: running PCRE on unbounded attacker-controlled input risks catastrophic backtracking that can freeze the PHP process (ReDoS). Skipping overlength values mirrors the behavior of standard WAFs such as ModSecurity's `SecRequestBodyLimit`.
+`RegexEvaluator` skips any value whose byte length exceeds 8,192 bytes; the value is treated as non-matching. This is an intentional trade-off: running PCRE on unbounded attacker-controlled input risks catastrophic backtracking that can freeze the PHP process (ReDoS). Skipping overlength values mirrors the behavior of standard WAFs such as ModSecurity's `SecRequestBodyLimit`.
 
 In practice, legitimate request values (query parameters, header values, cookie values) are rarely larger than a few kilobytes. If you are matching multi-megabyte request bodies via `@rx`, consider pre-processing them before passing to the firewall.
 :::
@@ -485,7 +501,6 @@ Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is s
     $config->fail2ban->add('persistent-attacker',
         threshold: 5, period: 60, ban: 86400,
         filter: fn($req) => true,
-        key: KeyExtractors::ip()
     );
     ```
 

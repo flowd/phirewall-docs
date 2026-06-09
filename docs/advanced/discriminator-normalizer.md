@@ -10,17 +10,17 @@ Phirewall provides two layers of key normalization to ensure consistent counting
 
 When a request is evaluated, the key goes through two normalization stages:
 
-1. **Discriminator Normalizer** (optional, user-configured) -- transforms the raw key before it reaches the cache key generator. Use this for domain-specific normalization like case-insensitive matching.
-2. **Cache Key Generator** (automatic) -- rule names are sanitized to safe characters; user-extracted keys are SHA-256 hashed for collision-free, fixed-length cache keys.
+1. **Discriminator Normalizer** (optional, user-configured): transforms the raw key before it reaches the cache key generator. Use this for domain-specific normalization like case-insensitive matching.
+2. **Cache Key Generator** (automatic): rule names are sanitized to safe characters; user-extracted keys are SHA-256 hashed for collision-free, fixed-length cache keys.
 
 ## The Bypass Problem
 
 Without normalization, attackers can bypass rate limiting by manipulating the key used for counting:
 
 ```
-phirewall:throttle:api:<hash of "192.168.1.100">   ← Real IP
-phirewall:throttle:api:<hash of "192.168.1.100 ">  ← Trailing space
-phirewall:throttle:api:<hash of " 192.168.1.100">  ← Leading space
+phirewall.throttle.api.<hash of "192.168.1.100">   ← Real IP
+phirewall.throttle.api.<hash of "192.168.1.100 ">  ← Trailing space
+phirewall.throttle.api.<hash of " 192.168.1.100">  ← Leading space
 ```
 
 Each of these would produce a different SHA-256 hash and create a separate counter, effectively multiplying the attacker's rate limit. The discriminator normalizer prevents this by transforming keys before hashing.
@@ -53,18 +53,18 @@ The normalizer is a `Closure` that receives a string and returns a string. It is
 Phirewall's `CacheKeyGenerator` produces cache keys in this format:
 
 ```
-{prefix}:{type}:{normalized_rule_name}:{hashed_key}
+{prefix}.{type}.{normalized_rule_name}.{hashed_key}
 ```
 
 ### Rule Name Normalization
 
 Rule names are sanitized for safe use in cache keys:
 
-1. **Trimmed** -- leading and trailing whitespace removed
-2. **Sanitized** -- only `A-Za-z0-9._:-` characters are kept; all others replaced with `_`
-3. **Deduplicated** -- consecutive underscores collapsed to one
-4. **Truncated** -- names longer than 120 characters are shortened with a SHA-1 suffix
-5. **Empty-safe** -- empty strings are replaced with `empty`
+1. **Trimmed** - leading and trailing whitespace removed
+2. **Sanitized** - only `A-Za-z0-9._-` characters are kept; all others replaced with `_`
+3. **Deduplicated** - consecutive underscores collapsed to one
+4. **Truncated** - names longer than 120 characters are shortened with a SHA-1 suffix
+5. **Empty-safe** - empty strings are replaced with `empty`
 
 Rule names are memoized internally for performance.
 
@@ -77,10 +77,10 @@ User-extracted keys (IP addresses, usernames, API keys, etc.) are hashed with SH
 ```
 
 This ensures:
-- **Fixed length** -- regardless of input length, the cache key is always the same size
-- **No special characters** -- hex output is always safe for any cache backend
-- **Collision-free** -- SHA-256 has negligible collision probability
-- **No memory leak** -- unlike memoized normalization, hashing is stateless and safe for long-running processes
+- **Fixed length** - regardless of input length, the cache key is always the same size
+- **No special characters** - hex output is always safe for any cache backend
+- **Collision-free** - SHA-256 has negligible collision probability
+- **No memory leak** - unlike memoized normalization, hashing is stateless and safe for long-running processes
 
 ### Examples
 
@@ -171,15 +171,15 @@ Different cache backends have different key constraints:
 | File-based | OS path limit (~260 chars) | `/`, `\`, `NUL` |
 | Memcached | 250 bytes | Spaces, control characters |
 
-SHA-256 hashing ensures user keys are always exactly 64 hex characters, safe across all backends.
+SHA-256 hashing ensures user keys are always exactly 64 hex characters, safe across all backends. The Memcached and File-based rows are general PSR-16 examples; they are not bundled backends (Phirewall ships `InMemoryCache`, `ApcuCache`, `RedisCache`, and `PdoCache`).
 
 ### Security
 
 Without normalization, user-supplied values (like User-Agent strings, API keys, or email addresses) could:
 
-- **Enable bypass attacks** -- padding, encoding, or case variations create distinct keys for the same identity
-- **Exhaust cache memory** -- long user-agents or query strings create bloated keys
-- **Leak sensitive data** -- raw keys may appear in cache monitoring tools; hashed keys are opaque
+- **Enable bypass attacks** - padding, encoding, or case variations create distinct keys for the same identity
+- **Exhaust cache memory** - long user-agents or query strings create bloated keys
+- **Leak sensitive data** - raw keys may appear in cache monitoring tools; hashed keys are opaque
 
 ## Discriminator Normalizer vs. Key Extractor Normalization
 
@@ -199,10 +199,10 @@ Use `$config->setKeyPrefix()` to change the prefix and avoid collisions when sha
 
 ```php
 $config->setKeyPrefix('myapp');
-// Keys become: myapp:throttle:..., myapp:fail2ban:..., etc.
+// Keys become: myapp.throttle..., myapp.fail2ban..., etc.
 ```
 
-The prefix itself is validated -- it cannot be empty.
+The prefix is validated: it is trimmed (whitespace and a trailing `:` stripped), must be non-empty, and may not contain a PSR-16 reserved character (`{}()/\@:`) or any control/whitespace character; otherwise `setKeyPrefix()` throws `InvalidArgumentException` at the call site.
 
 ## Best Practices
 
