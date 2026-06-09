@@ -6,7 +6,7 @@ outline: deep
 
 `PortableConfig` expresses a firewall ruleset as plain, JSON-serializable data instead of PHP closures. Because a ruleset is just data, you can:
 
-- **store it in a database** and reload it on change (hot-reload),
+- **store it in a database** and pick up rule changes on the next request,
 - **ship it through a config service** (etcd, Consul, S3, a settings table),
 - **diff and review it in git**, or
 - **share one ruleset across many apps, processes, or languages**
@@ -132,33 +132,36 @@ Pattern backends carry a list of entries; each entry has a `PatternKind`:
 | `setFailOpen(bool)` | fail-open (default) vs fail-closed on backend errors |
 | `setKeyPrefix(prefix)` | cache-key prefix |
 
-## Pattern backends: rules in a database, hot-reloaded
+## Rules in a database
 
-Pattern backends are the natural fit for a block catalogue you maintain *outside* code, e.g. a `blocked_patterns` table or a threat feed. Store the serialized (ideally [signed](#signed-transport)) ruleset keyed by a version, keep the compiled `Firewall` in memory, and rebuild only when the version changes:
+Pattern backends and the portable schema are the natural fit for a block catalogue you maintain *outside* code, e.g. a `blocked_patterns` table or a threat feed. Store the (ideally [signed](#signed-transport)) ruleset in your store, and on each request load it and build the `Config`. Changing the stored rules then takes effect on the next request, with no deploy:
 
 ```php
 use Flowd\Phirewall\Http\Firewall;
 use Flowd\Phirewall\Portable\PortableConfig;
 
-// $store->load() returns ['version' => int, 'blob' => string] from your DB.
-$loadedVersion = null;
-$firewall = null;
+// $store->load() returns the signed blob from your DB / cache / config service.
+$portable = PortableConfig::loadSigned($store->load(), $secret);
+$firewall = new Firewall((new Config($cache))->combine($portable));
+```
 
-$reload = static function () use (&$store, &$loadedVersion, &$firewall, $secret, $cache): bool {
-    $row = $store->load();
-    if ($loadedVersion === $row['version']) {
-        return false; // already current; no rebuild
-    }
+Under classic PHP-FPM each request is a fresh process, so this runs once per request and always reflects the current rules. To avoid querying the database on every request, put a shared cache (APCu, for example) in front of the store.
 
+### Long-running workers
+
+Under a long-running worker runtime (Swoole, RoadRunner, FrankenPHP worker mode, Octane) the process handles many requests, so keep the built `Firewall` in memory and rebuild it only when the stored ruleset version changes:
+
+```php
+// $store->load() returns ['version' => int, 'blob' => string].
+$row = $store->load();
+if ($loadedVersion !== $row['version']) {
     $portable = PortableConfig::loadSigned($row['blob'], $secret);
     $firewall = new Firewall((new Config($cache))->combine($portable));
     $loadedVersion = $row['version'];
-
-    return true;
-};
+}
 ```
 
-When an operator publishes a new ruleset (and bumps the version), the next `$reload()` rebuilds the firewall; otherwise it is a no-op. See [`examples/29-portable-config.php`](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) for a runnable version with the database simulated in memory.
+See [`examples/29-portable-config.php`](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) for a runnable version with the database simulated in memory.
 
 ## Signed transport
 
@@ -196,7 +199,7 @@ A few capabilities cannot be represented as pure data and are intentionally **ex
 ## Examples
 
 - [`examples/28-portable-config-signing.php`](https://github.com/flowd/phirewall/blob/main/examples/28-portable-config-signing.php) - signed transport and tamper rejection.
-- [`examples/29-portable-config.php`](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) - round-trip, signing, and a database hot-reload scenario.
+- [`examples/29-portable-config.php`](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) - round-trip, signing, and a database-backed, per-request loading scenario.
 
 ## Related pages
 

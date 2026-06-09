@@ -47,7 +47,7 @@ php examples/01-basic-setup.php
 | 26 | [psr17-factories](https://github.com/flowd/phirewall/blob/main/examples/26-psr17-factories.php) | PSR-17 response factory integration |
 | 27 | [request-context](https://github.com/flowd/phirewall/blob/main/examples/27-request-context.php) | Post-handler fail2ban signaling |
 | 28 | [portable-config-signing](https://github.com/flowd/phirewall/blob/main/examples/28-portable-config-signing.php) | Signed PortableConfig transport (HMAC-SHA256) |
-| 29 | [portable-config](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) | PortableConfig as a first-class transport with DB hot-reload |
+| 29 | [portable-config](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) | PortableConfig as a first-class transport with database-backed rules |
 | 30 | [config-composition](https://github.com/flowd/phirewall/blob/main/examples/30-config-composition.php) | Layering configs (vendor → environment → tenant → deployment) |
 | 31 | [presets](https://github.com/flowd/phirewall/blob/main/examples/31-presets.php) | Ready-to-use rule presets and version comparison (compare `Presets::VERSION` against your own release feed) |
 
