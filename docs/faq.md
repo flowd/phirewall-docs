@@ -16,7 +16,7 @@ Phirewall works with any PSR-15 (PHP Standard Recommendation for HTTP Server Mid
 
 - **Slim** (4.x+)
 - **Mezzio** (Laminas)
-- **TYPO3** (v12/v13, via an extension middleware)
+- **TYPO3** (via an extension middleware)
 - **Laravel** (via `symfony/psr-http-message-bridge` + `nyholm/psr7`)
 - **Symfony** (via `symfony/psr-http-message-bridge`)
 - **Spiral**
