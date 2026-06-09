@@ -4,7 +4,7 @@ outline: deep
 
 # Common Attacks
 
-Ready-to-use Phirewall configurations for defending against common web application attacks. Each recipe is self-contained -- copy what you need and adapt it to your application.
+Ready-to-use Phirewall configurations for defending against common web application attacks. Each recipe is self-contained: copy what you need and adapt it to your application.
 
 ## Brute Force Login
 
@@ -12,19 +12,18 @@ Protect login endpoints with layered rate limiting and fail2ban.
 
 ### Post-Handler Failure Signaling (recommended)
 
-The accurate way to ban on *real* failed logins is to record the failure **after** your handler has verified the credentials, using [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext). The fail2ban rule's filter never matches on its own (`fn() => false`); your handler decides what counts as a failure and records it, and the middleware processes the recorded signal once the handler returns. This is the pattern shown in [`examples/02-brute-force-protection.php`](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php).
+The accurate way to ban on *real* failed logins is to record the failure **after** your handler has verified the credentials, using [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext). The fail2ban rule's filter never matches on its own (`fn() => false`); your handler decides what counts as a failure and records it, and the middleware processes the recorded signal once the handler returns. This pattern is demonstrated in [`examples/02-brute-force-protection.php`](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php).
 
 ```php
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Context\RequestContext;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\RedisCache;
 use Psr\Http\Message\ServerRequestInterface;
 
 $config = new Config(new RedisCache($redis));
 
 // Ban after 3 verified failures in 5 minutes for 1 hour.
-// The filter never matches — failures are signaled by the handler.
+// The filter never matches; failures are signaled by the handler.
 $config->fail2ban->add('login-failures',
     threshold: 3, period: 300, ban: 3600,
     filter: fn(ServerRequestInterface $req): bool => false,
@@ -43,7 +42,7 @@ Only genuine failures are counted, so a user who logs in correctly on the first 
 
 ### Fail2Ban on a Request Marker
 
-If you cannot integrate `RequestContext` (for example, the auth check lives in a separate service), a fail2ban filter can count a marker header instead. The filter inspects the **incoming request**, so the marker must be set by a **trusted middleware that runs before Phirewall** — never by the login handler, which runs *after* the firewall and can only set *response* headers that the pre-handler filter will never see:
+If you cannot integrate `RequestContext` (for example, the auth check lives in a separate service), a fail2ban filter can count a marker header instead. The filter inspects the **incoming request**, so the marker must be set by a **trusted middleware that runs before Phirewall**, never by the login handler, which runs *after* the firewall and can only set *response* headers that the pre-handler filter will never see:
 
 ```php
 use Flowd\Phirewall\Config;
@@ -65,10 +64,10 @@ $config->fail2ban->add('login-brute-force',
 );
 ```
 
-The `X-Login-Failed` **request** header must be set by a trusted upstream component **before** Phirewall evaluates the request — not by the login handler, which runs *after* the firewall and can only set response headers the pre-handler filter never sees.
+The `X-Login-Failed` **request** header must be set by a trusted upstream component **before** Phirewall evaluates the request, not by the login handler, which runs *after* the firewall and can only set response headers the pre-handler filter never sees.
 
 ::: warning
-Trust the `X-Login-Failed` marker only if an upstream component your application controls sets it — and strip any inbound copy of that header at the edge, so a client cannot forge it. When in doubt, prefer the post-handler `RequestContext` approach above.
+Trust the `X-Login-Failed` marker only if an upstream component your application controls sets it, and strip any inbound copy of that header at the edge, so a client cannot forge it. When in doubt, prefer the post-handler `RequestContext` approach above.
 :::
 
 ### Login Endpoint Throttle
@@ -97,11 +96,15 @@ $config->throttles->add('account-throttle',
     limit: 5,
     period: 60,
     key: function (ServerRequestInterface $req): ?string {
-        if ($req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST') {
-            $username = $req->getHeaderLine('X-Username');
-            return $username !== '' ? $username : null;
+        if ($req->getMethod() !== 'POST' || $req->getUri()->getPath() !== '/login') {
+            return null;
         }
-        return null;
+        // Key on the submitted credential read from the request body, not a
+        // client-settable header: an attacker could rotate or omit X-Username
+        // to dodge the per-account limit entirely.
+        $body = (array) $req->getParsedBody();
+        $username = $body['username'] ?? $body['email'] ?? null;
+        return $username !== null ? 'user:' . strtolower(trim((string) $username)) : null;
     },
 );
 ```
@@ -347,6 +350,10 @@ $config->throttles->add('api',
 );
 ```
 
+::: warning Tier and identity headers must come from your auth layer
+`X-Plan` and `X-User-Id` are read straight from the request here. A client can send `X-Plan: enterprise` to self-grant the highest limit, or rotate `X-User-Id` to dodge a per-user limit. Set these headers in your authentication layer **after** it verifies the principal, and strip or overwrite any inbound copy at the trusted edge (see the **Header keys are client-controlled** warning later on this page).
+:::
+
 ### Write Operation Limits
 
 Apply stricter limits to mutating operations:
@@ -389,7 +396,7 @@ $config->throttles->add('api',
 ```
 
 ::: warning Header keys are client-controlled
-A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold — a trivial bypass. Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')` — the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold (a trivial bypass). Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')`: the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
 :::
 
 ### Expensive Endpoint Protection
@@ -478,6 +485,9 @@ $config->blocklists->owasp('owasp', $rules);
 // ── Layer 4: Fail2Ban ─────────────────────────────────────────────────
 $config->fail2ban->add('login-brute-force',
     threshold: 5, period: 300, ban: 3600,
+    // X-Login-Failed must be set by trusted middleware and any inbound copy
+    // stripped at the edge (see Brute Force Login above); otherwise prefer the
+    // post-handler RequestContext::recordFailure() pattern.
     filter: fn($req): bool => $req->getHeaderLine('X-Login-Failed') === '1',
 );
 
@@ -511,7 +521,7 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 
 | Layer | Purpose | Response |
 |-------|---------|----------|
-| Track | Observe and count (never blocks) | -- |
+| Track | Observe and count (never blocks) | - |
 | Safelist | Bypass all remaining checks | 200 (pass-through) |
 | Blocklist | IP lists, OWASP rules, patterns | 403 |
 | Fail2Ban | Ban after repeated filtered failures | 403 |
@@ -525,7 +535,7 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 
 2. **Safelist your health checks.** Internal monitoring endpoints should bypass all firewall rules to avoid false alerts.
 
-3. **Use `clientIp()` behind proxies.** If your application runs behind a load balancer or CDN, configure a `TrustedProxyResolver` so rate limits and bans apply to the real client IP — raw `KeyExtractors::ip()` would collapse every client onto the proxy's address. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
+3. **Use `clientIp()` behind proxies.** If your application runs behind a load balancer or CDN, configure a `TrustedProxyResolver` so rate limits and bans apply to the real client IP; raw `KeyExtractors::ip()` would collapse every client onto the proxy's address. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
 
 4. **Start with logging, then enforce.** Use [Track rules](/advanced/track-notifications) to observe traffic patterns before enabling blocking rules.
 

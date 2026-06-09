@@ -55,11 +55,11 @@ php examples/01-basic-setup.php
 
 ## Framework Integration
 
-Production-ready integration examples for popular PHP frameworks. Each example includes storage, safelists, blocklists, rate limiting, brute-force protection, OWASP rules, and observability -- copy, paste, adapt.
+Production-ready integration examples for popular PHP frameworks. Each example includes storage, safelists, blocklists, rate limiting, brute-force protection, OWASP rules, and observability. Copy, paste, adapt.
 
 ### PSR-15 (Generic / Plain PHP)
 
-Works with any PSR-15 compatible stack (Mezzio, custom dispatchers, etc.). Requires `nyholm/psr7`.
+Works with any PSR-15 compatible stack (custom dispatchers, runtimes, etc.; Mezzio has its own section below). Requires `nyholm/psr7`.
 
 ```php
 <?php
@@ -183,7 +183,11 @@ echo 'Status: ' . $response->getStatusCode() . "\n";
 
 ### Symfony
 
-Requires `symfony/psr-http-message-bridge` and `nyholm/psr7`. Phirewall runs as a PSR-15 middleware wrapped by Symfony's PSR bridge — the bridge factories (`HttpMessageFactoryInterface`, `HttpFoundationFactoryInterface`) and the `nyholm/psr7` PSR-17 factory then autowire into the listener below.
+Requires `symfony/psr-http-message-bridge` and `nyholm/psr7`. Phirewall runs as a PSR-15 middleware wrapped by Symfony's PSR bridge; the bridge factories (`HttpMessageFactoryInterface`, `HttpFoundationFactoryInterface`) and the `nyholm/psr7` PSR-17 factory then autowire into the listener below.
+
+```bash
+composer require symfony/psr-http-message-bridge nyholm/psr7
+```
 
 ::: warning
 This bridge runs Phirewall with a pass-through handler, so the `RequestContext` attribute it attaches for app-recorded fail2ban/allow2ban signals lives on the throwaway PSR request and is not visible to your Symfony controllers. Use the pre-handler rule filters for blocking; post-handler `recordFailure()`/`recordHit()` from a controller is not propagated by this basic bridge.
@@ -298,6 +302,11 @@ class PhirewallFactory
 **`config/services.yaml`**
 
 ```yaml
+# Add these under the `services:` key in Symfony's default config/services.yaml.
+# Keep the stock `_defaults: { autowire: true, autoconfigure: true }` and `App\:`
+# resource block: `autoconfigure` is what turns the #[AsEventListener] below into a
+# registered listener, and the `App\` loader registers the factory and listener as
+# services. Drop them and the listener never runs, so Phirewall silently does nothing.
 services:
     App\Factory\PhirewallFactory:
         arguments:
@@ -307,7 +316,14 @@ services:
         factory: ['@App\Factory\PhirewallFactory', 'create']
 ```
 
-Set the proxy CIDRs in your environment (e.g. `.env`): `PHIREWALL_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12`. The listener below auto-registers via `#[AsEventListener]` + autoconfigure — no manual `tags:` entry needed.
+Define `PHIREWALL_TRUSTED_PROXIES` in your environment even if empty: an undefined `%env()%` reference fails container compilation, whereas an empty value cleanly disables proxy resolution (the factory's `array_filter` drops it).
+
+```dotenv
+# .env  (empty disables Phirewall's proxy resolution)
+PHIREWALL_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
+```
+
+The listener below auto-registers via `#[AsEventListener]` + autoconfigure; no manual `tags:` entry needed.
 
 **`src/EventListener/PhirewallListener.php`**
 
@@ -350,14 +366,26 @@ final class PhirewallListener
             return;
         }
         $psrRequest = $this->psrHttpFactory->createRequest($event->getRequest());
-        $psrResponse = $this->middleware->process($psrRequest, $this->passThroughHandler());
-        if ($psrResponse->getStatusCode() === 200) {
-            if ($psrResponse->getHeaders() !== []) {
-                $event->getRequest()->attributes->set(self::HEADERS_ATTRIBUTE, $psrResponse->getHeaders());
+        $probe = new class ($this->responseFactory) implements RequestHandlerInterface {
+            private bool $invoked = false;
+            public function __construct(private readonly ResponseFactoryInterface $responseFactory) {}
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                $this->invoked = true;
+                return $this->responseFactory->createResponse(200);
             }
+            public function wasInvoked(): bool { return $this->invoked; }
+        };
+        $psrResponse = $this->middleware->process($psrRequest, $probe);
+        if (!$probe->wasInvoked()) {
+            // The handler never ran: Phirewall produced a block/throttle response.
+            $event->setResponse($this->httpFoundationFactory->createResponse($psrResponse));
             return;
         }
-        $event->setResponse($this->httpFoundationFactory->createResponse($psrResponse));
+        // Allowed: carry Phirewall's rate-limit headers onto the real response.
+        if ($psrResponse->getHeaders() !== []) {
+            $event->getRequest()->attributes->set(self::HEADERS_ATTRIBUTE, $psrResponse->getHeaders());
+        }
     }
 
     #[AsEventListener(event: KernelEvents::RESPONSE)]
@@ -373,16 +401,6 @@ final class PhirewallListener
         }
     }
 
-    private function passThroughHandler(): RequestHandlerInterface
-    {
-        return new class ($this->responseFactory) implements RequestHandlerInterface {
-            public function __construct(private readonly ResponseFactoryInterface $responseFactory) {}
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                return $this->responseFactory->createResponse(200);
-            }
-        };
-    }
 }
 ```
 
@@ -390,7 +408,7 @@ final class PhirewallListener
 
 ### Laravel
 
-`Flowd\Phirewall\Middleware` is a PSR-15 middleware (`process(...)`), **not** a Laravel middleware (`handle($request, $next)`) — registering the class directly throws. A thin bridge middleware adapts it. Install the bridge:
+`Flowd\Phirewall\Middleware` is a PSR-15 middleware (`process(...)`), **not** a Laravel middleware (`handle($request, $next)`); registering the class directly throws. A thin bridge middleware adapts it. Install the bridge:
 
 ```bash
 composer require symfony/psr-http-message-bridge nyholm/psr7
@@ -446,8 +464,12 @@ class PhirewallServiceProvider extends ServiceProvider
             $config->setFailOpen(true);
 
             // ── Trusted Proxies ──────────────────────────────────
-            $trustedProxies = config('trustedproxy.proxies', []);
-            if (is_array($trustedProxies) && $trustedProxies !== []) {
+            // Phirewall resolves the client IP from its OWN trusted-proxy list,
+            // independent of Laravel's TrustProxies middleware. List your load
+            // balancer / CDN ranges here (e.g. via a TRUSTED_PROXIES env var).
+            // Leave empty only for a direct-to-PHP deployment.
+            $trustedProxies = array_filter(explode(',', (string) env('TRUSTED_PROXIES', '')));
+            if ($trustedProxies !== []) {
                 $proxyResolver = new TrustedProxyResolver($trustedProxies);
                 $config->setIpResolver(
                     KeyExtractors::clientIp($proxyResolver)
@@ -512,6 +534,8 @@ class PhirewallServiceProvider extends ServiceProvider
             );
 
             // ── PSR-17 Response Bodies ───────────────────────────
+            // usePsr17Responses() sets the block/throttle response bodies; the
+            // constructor argument is only the fallback ResponseFactory.
             $psr17 = new Psr17Factory();
             $config->usePsr17Responses($psr17, $psr17);
 
@@ -523,7 +547,7 @@ class PhirewallServiceProvider extends ServiceProvider
 
 **`app/Http/Middleware/Phirewall.php`**
 
-The bridge adapts the PSR-15 engine to Laravel's middleware contract. It uses a probe handler so the real Laravel response is never round-tripped through PSR-7 — `StreamedResponse`/`BinaryFileResponse` and other special responses are preserved. On the allowed path it copies Phirewall's `X-RateLimit-*` headers onto the real response.
+The bridge adapts the PSR-15 engine to Laravel's middleware contract. It uses a probe handler so the real Laravel response is never round-tripped through PSR-7; `StreamedResponse`/`BinaryFileResponse` and other special responses are preserved. On the allowed path it copies Phirewall's `X-RateLimit-*` headers onto the real response.
 
 ```php
 <?php
@@ -578,7 +602,15 @@ final readonly class Phirewall
 }
 ```
 
-Register the service provider in `bootstrap/providers.php` (Laravel 11+) or the `providers` array in `config/app.php` (Laravel 10 and earlier).
+Register the service provider in `bootstrap/providers.php` (Laravel 11+) or the `providers` array in `config/app.php` (Laravel 10 and earlier):
+
+```php
+// bootstrap/providers.php (Laravel 11+)
+return [
+    App\Providers\AppServiceProvider::class,
+    App\Providers\PhirewallServiceProvider::class,
+];
+```
 
 **`bootstrap/app.php`** (Laravel 11/12)
 
@@ -608,7 +640,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
 ```php
 protected $middleware = [
-    \App\Http\Middleware\Phirewall::class, // outermost -- before everything
+    \App\Http\Middleware\Phirewall::class, // outermost: runs before everything
     // ... other global middleware
 ];
 ```
@@ -617,7 +649,7 @@ protected $middleware = [
 
 ### Slim
 
-Native PSR-15 support. Requires a PSR-17 factory (`slim/psr7` ships with the Slim skeleton, or install `nyholm/psr7`) plus `ext-apcu` for `ApcuCache`. Without a PSR-17 factory the middleware constructor throws, since it auto-detects a `ResponseFactory`.
+Native PSR-15 support. The middleware auto-detects a PSR-17 `ResponseFactory` from installed packages (`slim/psr7`, which ships with the Slim skeleton, or `nyholm/psr7`) and throws if none is found, so install one (plus `ext-apcu` for `ApcuCache`).
 
 ```php
 <?php
@@ -1125,7 +1157,7 @@ use Psr\Http\Message\ServerRequestInterface;
 
 $config = new Config(new InMemoryCache());
 
-// The filter returns false -- failures are signaled programmatically
+// The filter returns false; failures are signaled programmatically
 $config->fail2ban->add('login-failures',
     threshold: 3,
     period: 300,
@@ -1137,7 +1169,7 @@ $config->fail2ban->add('login-failures',
 // $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 // if ($loginFailed) {
 //     // The firewall derives the key from the rule's own keyExtractor
-//     // -- no need to repeat the IP/header/etc. extraction here.
+//     // No need to repeat the IP/header/etc. extraction here.
 //     $context?->recordFailure('login-failures');
 // }
 ```
@@ -1355,7 +1387,7 @@ $psr17Factory = new Psr17Factory();
 $config->blocklistedResponseFactory = new Psr17BlocklistedResponseFactory(
     $psr17Factory,
     $psr17Factory,
-    'Access Denied -- your request has been blocked.',
+    'Access Denied. Your request has been blocked.',
 );
 
 $config->throttledResponseFactory = new Psr17ThrottledResponseFactory(

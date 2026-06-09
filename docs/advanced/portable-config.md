@@ -11,7 +11,7 @@ outline: deep
 - **diff and review it in git**, or
 - **share one ruleset across many apps, processes, or languages**
 
-…and then materialize a live [`Config`](/getting-started) from it with [`Config::combine()`](/advanced/config-composition) — the schema is pure data and never carries a cache. Closures are never serialized, so the surface is intentionally a safe, declarative subset (see [Not portable by design](#not-portable-by-design)).
+…and then materialize a live [`Config`](/getting-started) from it with [`Config::combine()`](/advanced/config-composition); the schema is pure data and never carries a cache. Closures are never serialized, so the surface is intentionally a safe, declarative subset (see [Not portable by design](#not-portable-by-design)).
 
 ## Building and round-tripping
 
@@ -49,7 +49,7 @@ $firewall = new Firewall($config);
 
 (A request-header marker is forgeable; for real login-failure bans prefer the post-handler [`RequestContext::recordFailure()`](/advanced/request-context) pattern.)
 
-`fromArray()` validates the *shape* of the data (rule/filter/key types, regex patterns compile, pattern-entry fields) and throws `InvalidArgumentException` on anything malformed. It does **not** verify *authenticity* — for that, see [Signed transport](#signed-transport).
+`fromArray()` validates the *shape* of the data (rule/filter/key types, regex patterns compile, pattern-entry fields) and throws `InvalidArgumentException` on anything malformed. It does **not** verify *authenticity*; for that, see [Signed transport](#signed-transport).
 
 ## The catalogue
 
@@ -63,7 +63,7 @@ Everything `PortableConfig` can express today.
 | `blocklist(name, filter)` | Deny (403) when the filter matches |
 | `throttle(name, limit, period, key, sliding = false, scope = null)` | Fixed or sliding-window rate limit (429); the optional `scope` filter restricts which requests the throttle counts (e.g. only `/api`) |
 | `fail2ban(name, threshold, period, ban, filter, key)` | Auto-ban after repeated matching ("bad") requests |
-| `allow2ban(name, threshold, period, ban, key)` | Hard volume cap — ban after too many *total* requests for a key |
+| `allow2ban(name, threshold, period, ban, key)` | Hard volume cap: ban after too many *total* requests for a key |
 | `track(name, period, filter, key, limit = null)` | Passive counting with optional alert threshold |
 | `addPatternBackend(name, entries)` | Register a reusable catalogue of block patterns |
 | `blocklistFromBackend(name, backendName)` | Add a blocklist that matches against a registered backend |
@@ -74,7 +74,7 @@ Everything `PortableConfig` can express today.
 | Factory | Matches when … |
 |---------|----------------|
 | `filterAll()` | always |
-| `filterNone()` | never — a filter that never matches; use it for a rule that must not be assertable from any request property (e.g. a fail2ban driven solely by `RequestContext::recordFailure`) |
+| `filterNone()` | never: a filter that never matches; use it for a rule that must not be assertable from any request property (e.g. a fail2ban driven solely by `RequestContext::recordFailure`) |
 | `filterPathEquals(path)` | the path equals `path` |
 | `filterPathPrefix(prefix)` | the path starts with `prefix` |
 | `filterPathRegex(pattern)` | the path matches the PCRE `pattern` (delimiters included) |
@@ -83,9 +83,9 @@ Everything `PortableConfig` can express today.
 | `filterHeaderEquals(name, value)` | header `name` equals `value` |
 | `filterHeaderPresent(name)` | header `name` is present with any non-empty value |
 | `filterHeaderRegex(name, pattern)` | header `name` matches the PCRE `pattern` |
-| `filterIp(ipsOrCidrs)` | the client IP is in the list (CIDR-aware, IPv4/IPv6) — backed by `IpMatcher` |
-| `filterKnownScanners(patterns = null)` | the User-Agent matches a known scanner; `null` uses the curated default list — backed by `KnownScannerMatcher` |
-| `filterSuspiciousHeaders(requiredHeaders = null)` | a required browser header is missing; `null` uses the default set — backed by `SuspiciousHeadersMatcher` |
+| `filterIp(ipsOrCidrs)` | the client IP is in the list (CIDR-aware, IPv4/IPv6), backed by `IpMatcher` |
+| `filterKnownScanners(patterns = null)` | the User-Agent matches a known scanner; `null` uses the curated default list, backed by `KnownScannerMatcher` |
+| `filterSuspiciousHeaders(requiredHeaders = null)` | a required browser header is missing; `null` uses the default set, backed by `SuspiciousHeadersMatcher` |
 
 `filterIp`, `filterKnownScanners`, and `filterSuspiciousHeaders` compile to the dedicated matcher classes (so you get their diagnostics and CIDR handling); the remaining filters compile to a request-predicate closure.
 
@@ -101,10 +101,10 @@ Everything `PortableConfig` can express today.
 | `keyMethod()` | HTTP method |
 | `keyPath()` | request path |
 | `keyHeader(name)` | raw value of header `name` |
-| `keyHashedHeader(name)` | sha256 fingerprint of header `name` — preferred for credential-bearing headers (`Authorization`, `Cookie`, `X-Api-Key`) so the raw value never reaches the cache/ban registry |
+| `keyHashedHeader(name)` | sha256 fingerprint of header `name`, preferred for credential-bearing headers (`Authorization`, `Cookie`, `X-Api-Key`) so the raw value never reaches the cache/ban registry |
 
 ::: tip
-`keyIp()` keys on `REMOTE_ADDR`, which behind a CDN or load balancer is the proxy's address, not the client's. The IP resolver is a closure and therefore not portable — set it on the rebuilt `Config` with `setIpResolver(KeyExtractors::clientIp(new TrustedProxyResolver([...])))`. See [Client IP behind proxies](/getting-started#client-ip-behind-proxies).
+`keyIp()` keys on `REMOTE_ADDR`, which behind a CDN or load balancer is the proxy's address, not the client's. The IP resolver is a closure and therefore not portable; set it on the rebuilt `Config` with `setIpResolver(KeyExtractors::clientIp(new TrustedProxyResolver([...])))`. See [Client IP behind proxies](/getting-started#client-ip-behind-proxies).
 :::
 
 ### Pattern kinds (`PortableConfig::patternEntry()`)
@@ -122,7 +122,7 @@ Pattern backends carry a list of entries; each entry has a `PatternKind`:
 | `PatternKind::HEADER_REGEX` | named header matches PCRE pattern (entry `target` = header name) |
 | `PatternKind::REQUEST_REGEX` | pattern over path + query + headers |
 
-`patternEntry()` also accepts optional `target`, `expiresAt`, `addedAt`, and a scalar `metadata` map — all of which round-trip as data, so an entry can carry its own expiry and provenance (handy when the catalogue lives in a database).
+`patternEntry()` also accepts optional `target`, `expiresAt`, `addedAt`, and a scalar `metadata` map, all of which round-trip as data, so an entry can carry its own expiry and provenance (handy when the catalogue lives in a database).
 
 ### Options
 
@@ -136,7 +136,7 @@ Pattern backends carry a list of entries; each entry has a `PatternKind`:
 
 ## Pattern backends: rules in a database, hot-reloaded
 
-Pattern backends are the natural fit for a block catalogue you maintain *outside* code — e.g. a `blocked_patterns` table or a threat feed. Store the serialized (ideally [signed](#signed-transport)) ruleset keyed by a version, keep the compiled `Firewall` in memory, and rebuild only when the version changes:
+Pattern backends are the natural fit for a block catalogue you maintain *outside* code, e.g. a `blocked_patterns` table or a threat feed. Store the serialized (ideally [signed](#signed-transport)) ruleset keyed by a version, keep the compiled `Firewall` in memory, and rebuild only when the version changes:
 
 ```php
 use Flowd\Phirewall\Http\Firewall;
@@ -149,7 +149,7 @@ $firewall = null;
 $reload = static function () use (&$store, &$loadedVersion, &$firewall, $secret, $cache): bool {
     $row = $store->load();
     if ($loadedVersion === $row['version']) {
-        return false; // already current — no rebuild
+        return false; // already current; no rebuild
     }
 
     $portable = PortableConfig::loadSigned($row['blob'], $secret);
@@ -164,7 +164,7 @@ When an operator publishes a new ruleset (and bumps the version), the next `$rel
 
 ## Signed transport
 
-When the serialized config is read back from storage you do **not** fully control — a shared filesystem, an S3 bucket, etcd, a config service, a git repo that accepts external contributions — an attacker who can write the blob could inject an allow-all safelist and disable the firewall. `fromArray()` validates shape only, not authenticity.
+When the serialized config is read back from storage you do **not** fully control (a shared filesystem, an S3 bucket, etcd, a config service, a git repo that accepts external contributions), an attacker who can write the blob could inject an allow-all safelist and disable the firewall. `fromArray()` validates shape only, not authenticity.
 
 `toSignedJson()` / `loadSigned()` close that gap with an HMAC-SHA256 envelope:
 
@@ -174,11 +174,11 @@ $restored = PortableConfig::loadSigned($signed, $secretKey); // verifies before 
 ```
 
 - The envelope is JWS-compact-style: `<header>.<payload>.<signature>`, where the signature is HMAC-SHA256 over `<header>.<payload>`.
-- Verification uses a constant-time `hash_equals()` compare. Any tampering — payload edit, key substitution, or an `alg=none` downgrade attempt — is rejected with a `RuntimeException` *before* the rules are applied.
+- Verification uses a constant-time `hash_equals()` compare. Any tampering (payload edit, key substitution, or an `alg=none` downgrade attempt) is rejected with a `RuntimeException` *before* the rules are applied.
 - Signing keys must be at least 16 bytes; **32 random bytes is recommended** (`random_bytes(32)`), stored in your secrets manager.
 
 ::: warning Threat model
-Signing protects **integrity and authenticity**, not confidentiality — the payload is base64url-encoded, not encrypted, so anyone who can read the envelope can read the ruleset. Distribute the secret only to the producer and the consumers, rotate it like any other credential, and keep it out of the serialized blob. Signing also does not make a ruleset *safe to run* if you do not trust its author; it only proves the bytes were not altered after signing.
+Signing protects **integrity and authenticity**, not confidentiality: the payload is base64url-encoded, not encrypted, so anyone who can read the envelope can read the ruleset. Distribute the secret only to the producer and the consumers, rotate it like any other credential, and keep it out of the serialized blob. Signing also does not make a ruleset *safe to run* if you do not trust its author; it only proves the bytes were not altered after signing.
 :::
 
 See [`examples/28-portable-config-signing.php`](https://github.com/flowd/phirewall/blob/main/examples/28-portable-config-signing.php) for a signing + tamper-rejection walkthrough.
@@ -192,16 +192,16 @@ A few capabilities cannot be represented as pure data and are intentionally **ex
 | Trusted-bot reverse-DNS safelisting (`TrustedBotMatcher`) | needs live DNS resolution and an optional cache at request time |
 | OWASP Core Rule Set (`blocklists->owasp()`) | a ruleset is parsed `SecRule` objects / rule files, not a small data blob |
 | File-backed lists (`fileIp`, `filePatternBackend`) | filesystem paths are environment-specific; the in-memory pattern backend is the portable equivalent |
-| Closure-driven dynamic throttle limits/periods, `$config->throttles->multi()` | limits/periods can be arbitrary PHP closures and cannot be serialized (express the multi-window case as several `throttle()` entries; `sliding` is supported) |
+| Closure-driven dynamic throttle limits/periods, `$config->throttles->multi()` | limits/periods can be arbitrary PHP closures and cannot be serialized (express the multi-window case as several `throttles->add()` entries; `sliding` is supported) |
 | Response factories, `ipResolver`, `discriminatorNormalizer` | these are closures / objects, not declarative data |
 
 ## Examples
 
-- [`examples/28-portable-config-signing.php`](https://github.com/flowd/phirewall/blob/main/examples/28-portable-config-signing.php) — signed transport and tamper rejection.
-- [`examples/29-portable-config.php`](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) — round-trip, signing, and a database hot-reload scenario.
+- [`examples/28-portable-config-signing.php`](https://github.com/flowd/phirewall/blob/main/examples/28-portable-config-signing.php) - signed transport and tamper rejection.
+- [`examples/29-portable-config.php`](https://github.com/flowd/phirewall/blob/main/examples/29-portable-config.php) - round-trip, signing, and a database hot-reload scenario.
 
 ## Related pages
 
-- [Config Composition](/advanced/config-composition) — layer a portable ruleset under environment and tenant overlays.
-- [Presets](/advanced/presets) — ready-made rule bundles, each defined as a `PortableConfig`.
-- [Storage Backends](/features/storage) — the PSR-16 cache a `Config` needs.
+- [Config Composition](/advanced/config-composition) - layer a portable ruleset under environment and tenant overlays.
+- [Presets](/advanced/presets) - ready-made rule bundles, each defined as a `PortableConfig`.
+- [Storage Backends](/features/storage) - the PSR-16 cache a `Config` needs.

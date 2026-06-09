@@ -4,7 +4,7 @@ outline: deep
 
 # Config Composition
 
-Real deployments rarely have a single source of firewall rules. A vendor ships a baseline, an environment (staging vs. production) adds its own rules, a tenant overrides a few, and a single deployment applies a last-minute tweak. `Config::compose()` (and the fluent `Config::mergedWith()`) merges these layers into one effective `Config` — **without mutating any input** — so each layer can be owned, versioned, and shipped independently, often as a [`PortableConfig`](/advanced/portable-config).
+Real deployments rarely have a single source of firewall rules. A vendor ships a baseline, an environment (staging vs. production) adds its own rules, a tenant overrides a few, and a single deployment applies a last-minute tweak. `Config::compose()` (and the fluent `Config::mergedWith()`) merges these layers into one effective `Config` (**without mutating any input**) so each layer can be owned, versioned, and shipped independently, often as a [`PortableConfig`](/advanced/portable-config).
 
 ## Usage
 
@@ -12,7 +12,7 @@ Real deployments rarely have a single source of firewall rules. A vendor ships a
 use Flowd\Phirewall\Config;
 
 // Each layer is owned and versioned independently, usually as a PortableConfig.
-// Materialize them onto your cache with Config::combine() — later layers win.
+// Materialize them onto your cache with Config::combine(); later layers win.
 // The cache lives only on Config; the portable layers never carry one.
 $effective = (new Config($cache))->combine(
     $vendorPortable,        // shared product defaults
@@ -21,7 +21,7 @@ $effective = (new Config($cache))->combine(
 );
 
 // Already holding Config instances? compose() / mergedWith() layer those directly
-// (same precedence — later layers win):
+// (same precedence; later layers win):
 $effective = $vendorConfig->mergedWith($environmentConfig, $tenantConfig);
 $effective = Config::compose($vendorConfig, $environmentConfig, $tenantConfig);
 ```
@@ -51,13 +51,13 @@ A `Config` does not track which options were *set* versus *left at their default
 
 ### Limitation: an overlay cannot reset a toggle to its default
 
-Because "default-valued" is read as "no opinion", an overlay **cannot turn a toggle back off** once an earlier layer turned it on. If the vendor baseline calls `enableResponseHeaders()` (changing the toggle from its `false` default to `true`), a tenant overlay that leaves the toggle at `false` will *not* switch it back off — its `false` is indistinguishable from "unspecified", so the baseline's explicit `true` wins. The same applies to `failOpen` and the other boolean toggles. (`enabled` is the deliberate exception — see its row above — it uses last-layer-wins, so a later layer *can* re-assert it.)
+Because "default-valued" is read as "no opinion", an overlay **cannot turn a toggle back off** once an earlier layer turned it on. If the vendor baseline calls `enableResponseHeaders()` (changing the toggle from its `false` default to `true`), a tenant overlay that leaves the toggle at `false` will *not* switch it back off; its `false` is indistinguishable from "unspecified", so the baseline's explicit `true` wins. The same applies to `failOpen` and the other boolean toggles. (`enabled` is the deliberate exception: as its row above notes, it uses last-layer-wins, so a later layer *can* re-assert it.)
 
 If you need a later layer to *force* a non-default option back to the default, do not rely on composition: build the final `Config` and set the option explicitly after composing, e.g. `Config::compose(...)->setFailOpen(true)`.
 
 ### Limitation: composing the IP resolver does not rewrite IP-aware matchers
 
-IP-aware matchers (`IpMatcher`, the file/snapshot IP blocklists, `TrustedBotMatcher`) capture their IP resolver **when the rule is constructed**. Because composition copies already-built rule objects, composing a layer with a different IP resolver only affects rules added *after* it — it does **not** retroactively change how earlier layers' IP rules resolve the client IP. Set the resolver on each source `Config` (via `setIpResolver()`) **before** adding its IP rules, rather than expecting a later layer to override it.
+IP-aware matchers (`IpMatcher`, the file/snapshot IP blocklists, `TrustedBotMatcher`) capture their IP resolver **when the rule is constructed**. Because composition copies already-built rule objects, composing a layer with a different IP resolver only affects rules added *after* it; it does **not** retroactively change how earlier layers' IP rules resolve the client IP. Set the resolver on each source `Config` (via `setIpResolver()`) **before** adding its IP rules, rather than expecting a later layer to override it.
 
 This limitation does **not** apply to counter rules (throttle, fail2ban, allow2ban, track) added **without** an explicit `key`. Their default IP key is resolved per request against the `Config` they run under, so a composed `Config` correctly applies its own merged IP resolver to such rules no matter which layer defined them.
 
@@ -85,6 +85,6 @@ See [`examples/30-config-composition.php`](https://github.com/flowd/phirewall/bl
 
 ## Related pages
 
-- [Portable Config](/advanced/portable-config) — ship each layer as serializable data.
-- [Presets](/advanced/presets) — bundled `Config`s designed to be composed under your own rules.
-- [Getting Started](/getting-started) — the base `Config` and its options.
+- [Portable Config](/advanced/portable-config) - ship each layer as serializable data.
+- [Presets](/advanced/presets) - bundled `Config`s designed to be composed under your own rules.
+- [Getting Started](/getting-started) - the base `Config` and its options.

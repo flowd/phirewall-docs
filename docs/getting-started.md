@@ -37,7 +37,7 @@ composer require monolog/monolog
 
 ## Step 1: Choose a Storage Backend
 
-Phirewall needs a PSR-16 (PHP Standard Recommendation for Simple Caching) cache for storing counters and ban states. Pick the backend that fits your deployment.
+Phirewall needs a PSR-16 (PHP Standard Recommendation for Simple Caching) cache for storing counters and ban states. Pick the backend that fits your deployment. If you are just trying Phirewall locally, start with `InMemoryCache`; choose a shared backend (Redis or PDO) before production.
 
 ::: code-group
 
@@ -100,11 +100,7 @@ The `Config` constructor accepts:
 
 ## Step 3: Define Rules
 
-All imports needed for the examples below:
-
-```php
-use Flowd\Phirewall\KeyExtractors;
-```
+Every safelist, blocklist, throttle, fail2ban, and track callback receives the incoming PSR-7 `ServerRequestInterface`, so you can branch on the path, method, headers, and so on. The snippets below use the `$config` from Step 2; the `$req` parameter is that request.
 
 ### Safelists (Allow Trusted Traffic)
 
@@ -117,7 +113,8 @@ $config->safelists->add('metrics', fn($req) => $req->getUri()->getPath() === '/m
 // Safelist specific IPs or CIDR ranges
 $config->safelists->ip('office', ['10.0.0.0/8', '192.168.1.0/24']);
 
-// Safelist verified search engine bots (Googlebot, Bingbot, etc.)
+// Safelist verified search engine bots (Googlebot, Bingbot, etc.).
+// Verified via reverse DNS; pass a cache to skip repeat lookups (see Bot Detection).
 $config->safelists->trustedBots();
 ```
 
@@ -144,7 +141,7 @@ $config->blocklists->suspiciousHeaders();
 
 ### Throttling (Rate Limiting)
 
-Throttled requests receive `429 Too Many Requests` with a `Retry-After` header.
+Throttled requests receive `429 Too Many Requests` with a `Retry-After` header. Counting rules (throttle, fail2ban, allow2ban, track) count requests against a *key*, an identity that defaults to the client IP (`KeyExtractors::ip()`, which reads `REMOTE_ADDR`). Pass a `key:` with a `KeyExtractors::*` callable to count against something else; behind a proxy, set the real client IP with a resolver (see [Client IP Behind Proxies](#client-ip-behind-proxies)).
 
 ```php
 // 100 requests per minute per IP
@@ -173,7 +170,7 @@ See [Rate Limiting](/features/rate-limiting) and [Dynamic Throttle](/advanced/dy
 
 ### Fail2Ban (Brute Force Protection)
 
-Automatically ban clients after repeated failures. The filter evaluates each incoming request; matching requests increment a failure counter, and the client is banned as soon as the count reaches the threshold (e.g., `threshold: 5` bans on the 5th matching request — that request is itself blocked).
+Automatically ban clients after repeated failures. The filter evaluates each incoming request; matching requests increment a failure counter, and the client is banned as soon as the count reaches the threshold (e.g., `threshold: 5` bans on the 5th matching request; that request is itself blocked).
 
 ```php
 // Ban IPs that POST to /login more than 5 times in 5 minutes
@@ -252,12 +249,47 @@ See [PSR-17 Factories](/advanced/psr17) for custom response configuration.
 
 ## Step 5: Add to Your Application
 
+::: warning
+The framework tabs below use `ApcuCache`, which needs the `ext-apcu` extension and throws without it. On a machine without APCu, swap in `new InMemoryCache()` to try it out, or `RedisCache` / `PdoCache` for shared production storage (see [Step 1](#step-1-choose-a-storage-backend)).
+:::
+
 ::: code-group
 
-```php [PSR-15]
-// Any PSR-15 compatible stack (Mezzio, custom dispatchers, etc.)
-// The middleware from Step 4 plugs directly into your pipeline.
-$app->pipe($middleware);
+```php [PSR-15 / Plain PHP]
+// In a PSR-15 pipeline (Mezzio, custom dispatchers): $app->pipe($middleware);
+//
+// With no framework, a minimal public/index.php front controller. Serve with:
+//   php -S localhost:8080 public/index.php
+// Requires: composer require nyholm/psr7 nyholm/psr7-server
+use Nyholm\Psr7\Factory\Psr17Factory;
+use Nyholm\Psr7Server\ServerRequestCreator;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+
+// $middleware is the Phirewall middleware from Step 4.
+$psr17 = new Psr17Factory();
+$request = (new ServerRequestCreator($psr17, $psr17, $psr17, $psr17))->fromGlobals();
+
+// Your application handler; it runs only if Phirewall lets the request through.
+$appHandler = new class ($psr17) implements RequestHandlerInterface {
+    public function __construct(private Psr17Factory $psr17) {}
+    public function handle(ServerRequestInterface $request): ResponseInterface
+    {
+        return $this->psr17->createResponse(200);
+    }
+};
+
+$response = $middleware->process($request, $appHandler);
+
+// Emit the PSR-7 response.
+http_response_code($response->getStatusCode());
+foreach ($response->getHeaders() as $name => $values) {
+    foreach ($values as $value) {
+        header("$name: $value", false);
+    }
+}
+echo $response->getBody();
 ```
 
 ```php [Symfony]
@@ -371,14 +403,26 @@ final class PhirewallListener
             return;
         }
         $psrRequest = $this->psrHttpFactory->createRequest($event->getRequest());
-        $psrResponse = $this->middleware->process($psrRequest, $this->passThroughHandler());
-        if ($psrResponse->getStatusCode() === 200) {
-            if ($psrResponse->getHeaders() !== []) {
-                $event->getRequest()->attributes->set(self::HEADERS_ATTRIBUTE, $psrResponse->getHeaders());
+        $probe = new class ($this->responseFactory) implements RequestHandlerInterface {
+            private bool $invoked = false;
+            public function __construct(private readonly ResponseFactoryInterface $responseFactory) {}
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                $this->invoked = true;
+                return $this->responseFactory->createResponse(200);
             }
+            public function wasInvoked(): bool { return $this->invoked; }
+        };
+        $psrResponse = $this->middleware->process($psrRequest, $probe);
+        if (!$probe->wasInvoked()) {
+            // The handler never ran: Phirewall produced a block/throttle response.
+            $event->setResponse($this->httpFoundationFactory->createResponse($psrResponse));
             return;
         }
-        $event->setResponse($this->httpFoundationFactory->createResponse($psrResponse));
+        // Allowed: carry Phirewall's rate-limit headers onto the real response.
+        if ($psrResponse->getHeaders() !== []) {
+            $event->getRequest()->attributes->set(self::HEADERS_ATTRIBUTE, $psrResponse->getHeaders());
+        }
     }
 
     #[AsEventListener(event: KernelEvents::RESPONSE)]
@@ -394,22 +438,12 @@ final class PhirewallListener
         }
     }
 
-    private function passThroughHandler(): RequestHandlerInterface
-    {
-        return new class ($this->responseFactory) implements RequestHandlerInterface {
-            public function __construct(private readonly ResponseFactoryInterface $responseFactory) {}
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                return $this->responseFactory->createResponse(200);
-            }
-        };
-    }
 }
 ```
 
 ```php [Laravel]
 // Flowd\Phirewall\Middleware is a PSR-15 middleware (process(...)), NOT a
-// Laravel middleware (handle($request, $next)) -- registering the class
+// Laravel middleware (handle($request, $next)); registering the class
 // directly throws. A thin bridge middleware (step 3) adapts it.
 // Install the bridge: composer require symfony/psr-http-message-bridge nyholm/psr7
 //
@@ -485,7 +519,7 @@ class PhirewallServiceProvider extends ServiceProvider
 // 2. Register the provider in bootstrap/providers.php (Laravel 11+)
 //    or the providers array in config/app.php (Laravel 10).
 //
-// 3. Create app/Http/Middleware/Phirewall.php -- the bridge.
+// 3. Create app/Http/Middleware/Phirewall.php, the bridge.
 //    Uses a probe handler so the real Laravel response is never
 //    round-tripped through PSR-7 (preserves StreamedResponse /
 //    BinaryFileResponse) and copies Phirewall's X-RateLimit-* headers
@@ -608,7 +642,7 @@ $app->run();
 ```
 
 ```php [Mezzio]
-// Mezzio uses PSR-15 natively -- pipe Phirewall first.
+// Mezzio uses PSR-15 natively. Pipe Phirewall right after the ErrorHandler.
 
 // In config/autoload/phirewall.global.php:
 // return [
@@ -677,15 +711,16 @@ class PhirewallMiddlewareFactory
     }
 }
 
-// In config/pipeline.php:
-// $app->pipe(\Flowd\Phirewall\Middleware::class); // outermost
+// In config/pipeline.php (pipe the ErrorHandler first, then Phirewall):
+// $app->pipe(\Laminas\Stratigility\Middleware\ErrorHandler::class);
+// $app->pipe(\Flowd\Phirewall\Middleware::class);
 // $app->pipe(\Mezzio\Router\Middleware\RouteMiddleware::class);
 // $app->pipe(\Mezzio\Router\Middleware\DispatchMiddleware::class);
 ```
 
 :::
 
-> **Middleware ordering:** Ensure Phirewall runs as the outermost middleware so it executes before your application handles the request. See the [Examples](/examples#framework-integration) page for more detailed, production-ready integrations.
+> **Middleware ordering:** Pipe Phirewall as early as possible, but after your error-handling middleware. Phirewall does not wrap the downstream handler, so a handler exception must be able to reach the error handler. See the [Examples](/examples#framework-integration) page for more detailed, production-ready integrations.
 
 ## Complete Example
 
@@ -699,7 +734,6 @@ declare(strict_types=1);
 require __DIR__ . '/vendor/autoload.php';
 
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -770,12 +804,12 @@ Request --> Track (passive) --> Safelist --> Blocklist --> Fail2Ban --> Throttle
 The evaluation order is:
 
 1. **Track** rules are always evaluated first (passive counting, never blocks)
-2. **Safelist** -- if matched, the request bypasses all remaining checks
-3. **Blocklist** -- if matched, the request is rejected with `403`
-4. **Fail2Ban** -- if the client is already banned, `403`; if the filter matches, increment failure counter
-5. **Throttle** -- if the counter exceeds the limit, `429` with `Retry-After`
-6. **Allow2Ban** -- if the client has exceeded the request threshold, `403` with `Retry-After`
-7. **Pass** -- the request reaches your application
+2. **Safelist**: if matched, the request bypasses all remaining checks
+3. **Blocklist**: if matched, the request is rejected with `403`
+4. **Fail2Ban**: if the client is already banned, `403`; if the filter matches, increment the failure counter
+5. **Throttle**: if the counter exceeds the limit, `429` with `Retry-After`
+6. **Allow2Ban**: if the client has exceeded the request threshold, `403` with `Retry-After`
+7. **Pass**: the request reaches your application
 
 ## Fail-Open / Fail-Closed
 
@@ -840,11 +874,11 @@ $config->throttles->add('api', limit: 100, period: 60,
 $config->setIpResolver(KeyExtractors::clientIp($resolver));
 ```
 
-::: danger Set a resolver behind a proxy — or every client shares one key
-`KeyExtractors::ip()` reads `REMOTE_ADDR` verbatim. Behind a CDN or load balancer that value is the *proxy's* address, so every client collapses onto a single throttle/ban key and your rate limits and bans become useless (or ban everyone at once). The same default applies to file-backed IP blocklists and infrastructure ban listeners. Whenever Phirewall runs behind a proxy, install a client-IP resolver — `$config->setIpResolver(KeyExtractors::clientIp(new TrustedProxyResolver([...])))` — so rules key on the originating client. And never trust `X-Forwarded-For` *without* configuring the trusted proxies: an attacker can otherwise spoof the header to forge any client IP.
+::: danger Set a resolver behind a proxy, or every client shares one key
+`KeyExtractors::ip()` reads `REMOTE_ADDR` verbatim. Behind a CDN or load balancer that value is the *proxy's* address, so every client collapses onto a single throttle/ban key and your rate limits and bans become useless (or ban everyone at once). The same default applies to file-backed IP blocklists and infrastructure ban listeners. Whenever Phirewall runs behind a proxy, install a client-IP resolver, `$config->setIpResolver(KeyExtractors::clientIp(new TrustedProxyResolver([...])))`, so rules key on the originating client. And never trust `X-Forwarded-For` *without* configuring the trusted proxies: an attacker can otherwise spoof the header to forge any client IP.
 :::
 
-### Resolver behavior (0.5.0)
+### Resolver behavior
 
 `TrustedProxyResolver` walks the forwarded chain from right to left, skipping hops whose address is in your trusted-proxy list, and returns the first untrusted address as the client IP (falling back to `REMOTE_ADDR` when the chain yields nothing valid). A few details are worth knowing:
 
@@ -857,13 +891,14 @@ new TrustedProxyResolver(
 );
 ```
 
-- **The default header is a single header.** `allowedHeaders` now defaults to `['X-Forwarded-For']` only. If your stack emits the RFC 7239 `Forwarded` header instead, pass it explicitly — `new TrustedProxyResolver([...], ['Forwarded'])`, or `['Forwarded', 'X-Forwarded-For']` for both — so the header the resolver trusts is visible at the call site rather than inferred.
-- **Only the last header instance is trusted.** If a request arrives with more than one `X-Forwarded-For` (or `Forwarded`) line, the resolver parses only the last instance — the one the closest proxy appended — and ignores any attacker-prepended duplicate line.
-- **IPv6 is canonicalized.** An IPv4-mapped IPv6 peer (`::ffff:203.0.113.7`) collapses to its embedded IPv4 form, so a plain IPv4 rule or CIDR matches it and an attacker cannot bypass an IPv4 rule by presenting the mapped form. Alternate *genuine*-IPv6 spellings (expanded `2001:0db8::1` vs compressed `2001:db8::1`, mixed case) are also treated as one identity by `ip()` / CIDR **list** matching, which compares the raw binary address. Rate-limit and ban keys, however, use the address exactly as the resolver returns it, so they rely on your proxy emitting a consistent spelling per client.
+- **The default header is a single header.** `allowedHeaders` defaults to `['X-Forwarded-For']` only. If your stack emits the RFC 7239 `Forwarded` header instead, pass it explicitly: `new TrustedProxyResolver([...], ['Forwarded'])`, or `['Forwarded', 'X-Forwarded-For']` for both, so the header the resolver trusts is visible at the call site rather than inferred.
+- **Proxy headers are read only when the direct peer is trusted.** The resolver consults `X-Forwarded-For` (or `Forwarded`) only when `REMOTE_ADDR`, the address that actually connected, is itself in your trusted-proxy list. A request arriving directly from an untrusted client has its forwarded headers ignored and is keyed on `REMOTE_ADDR`.
+- **All header instances are folded into one chain.** Whether intermediaries keep `X-Forwarded-For` as separate lines or fold them into one comma-separated value (the nginx default), the resolver flattens them and walks the chain right to left, returning the first hop that is not in your trusted-proxy list. The protection is this trusted-hop walk, not the number or order of header instances: a client-prepended value sits to the left of the addresses your proxies append, so it is returned only if every hop to its right is trusted. Correct trusted ranges are therefore essential, and stripping or overwriting the inbound header at the edge prevents spoofing outright.
+- **IPv6 is canonicalized.** An IPv4-mapped IPv6 peer (`::ffff:203.0.113.7`) collapses to its embedded IPv4 form, so a plain IPv4 rule or CIDR matches it and an attacker cannot bypass an IPv4 rule by presenting the mapped form. Alternate *genuine*-IPv6 spellings (expanded `2001:0db8::1` vs compressed `2001:db8::1`, mixed case) are also treated as one identity by `ip()` / CIDR **list** matching, which compares the raw binary address. When keys are derived through `KeyExtractors::clientIp()`, the resolver canonicalizes the address it returns, so per-client keys stay stable regardless of the spelling the client presents; the consistent-spelling caveat applies only to raw `KeyExtractors::ip()` (`REMOTE_ADDR`) or a custom resolver that does not canonicalize.
 
 ## First Test
 
-Verify your setup works by sending requests:
+With your application served (for the plain-PHP front controller in Step 5, run `php -S localhost:8080 public/index.php`; otherwise use your framework's own server), verify the firewall by sending requests:
 
 ```bash
 # Should pass (200)

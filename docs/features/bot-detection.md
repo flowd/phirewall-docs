@@ -8,7 +8,7 @@ Phirewall provides three specialized matchers for bot and scanner detection: **K
 
 ## Known Scanner Blocking
 
-The `knownScanners()` method blocks requests whose User-Agent matches known attack tools and vulnerability scanners. It ships with a curated default list covering 24 well-known tools.
+The `knownScanners()` method blocks requests whose User-Agent matches known attack tools and vulnerability scanners. It ships with a curated default list covering 24 tools (26 substring patterns, since Burp Suite and Metasploit each have two spellings).
 
 ### Quick Setup
 
@@ -116,15 +116,15 @@ $config->blocklists->suspiciousHeaders(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier (default: `'suspicious-headers'`) |
-| `$requiredHeaders` | `?list<string>` | Headers that must be present (case-sensitive header names). `null` uses the default set; a non-null list replaces the defaults. Passing `[]` requires nothing and never matches; do not use it for defaults. |
+| `$requiredHeaders` | `?list<string>` | Headers that must be present (matched case-insensitively per PSR-7). `null` uses the default set; a non-null list replaces the defaults. Passing `[]` requires nothing and never matches; do not use it for defaults. |
 
 ### Default Required Headers
 
 When no custom headers are specified, the following are required:
 
-- `Accept` -- specifies acceptable response content types
-- `Accept-Language` -- specifies acceptable languages
-- `Accept-Encoding` -- specifies acceptable compression
+- `Accept` - specifies acceptable response content types
+- `Accept-Language` - specifies acceptable languages
+- `Accept-Encoding` - specifies acceptable compression
 
 Every modern browser sends all three. Their absence strongly suggests an automated tool.
 
@@ -156,7 +156,7 @@ Some legitimate clients may not send all standard headers: API clients, embedded
 
 ## Trusted Bot Verification (rDNS)
 
-The `trustedBots()` method safelists verified search engine bots using **reverse DNS (rDNS) verification**. This prevents fake bots -- anyone can send `Googlebot` as a User-Agent, but only Google's real crawlers have IPs that resolve to `*.googlebot.com`.
+The `trustedBots()` method safelists verified search engine bots using **reverse DNS (rDNS) verification**. This prevents fake bots: anyone can send `Googlebot` as a User-Agent, but only Google's real crawlers have IPs that resolve to `*.googlebot.com`.
 
 ### Quick Setup
 
@@ -233,7 +233,7 @@ $config->safelists->trustedBots('custom-bots', [
 ```
 
 ::: danger
-The hostname suffix **must** start with a dot (e.g., `.googlebot.com`, not `googlebot.com`). This prevents subdomain spoofing -- without the leading dot, an attacker controlling `evil-googlebot.com` could pass verification.
+The hostname suffix **must** start with a dot (e.g., `.googlebot.com`, not `googlebot.com`). This prevents subdomain spoofing: without the leading dot, an attacker controlling `evil-googlebot.com` could pass verification.
 :::
 
 ### Caching DNS Results
@@ -386,6 +386,6 @@ ALLOW (pass to handler)
 
 6. **Safelist your API clients.** If your application serves both browser and API traffic, safelist API paths or known client IPs before applying `suspiciousHeaders()`, since API clients typically don't send browser headers.
 
-7. **Monitor false positives.** Use [events and logging](/advanced/observability) to track which rules are triggering and watch for false positives -- especially with `suspiciousHeaders()`, which may catch some legitimate clients.
+7. **Monitor false positives.** Use [events and logging](/advanced/observability) to track which rules are triggering and watch for false positives, especially with `suspiciousHeaders()`, which may catch some legitimate clients.
 
 8. **Combine with OWASP CRS.** For deep packet inspection beyond User-Agent matching, enable the [OWASP Core Rule Set](/features/owasp-crs) to detect SQL injection, XSS, and other attacks in request payloads.

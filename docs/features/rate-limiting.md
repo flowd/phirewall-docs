@@ -40,7 +40,7 @@ $config->throttles->add(
 | `$name` | `string` | Unique rule identifier |
 | `$limit` | `int\|Closure` | Max requests per window, or a [dynamic closure](#dynamic-limits) |
 | `$period` | `int\|Closure` | Window size in seconds, or a [dynamic closure](#dynamic-limits) |
-| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string` -- return a key to group by, or `null` to skip. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string`, return a key to group by, or `null` to skip. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
 
 ```php
 use Flowd\Phirewall\KeyExtractors;
@@ -49,7 +49,7 @@ use Flowd\Phirewall\KeyExtractors;
 $config->throttles->add('ip-limit', limit: 100, period: 60);
 ```
 
-When the key closure returns `null`, the rule is skipped for that request. This lets you apply throttles conditionally -- only to certain paths, methods, or user types.
+When the key closure returns `null`, the rule is skipped for that request. This lets you apply throttles conditionally, only to certain paths, methods, or user types.
 
 ```text
 Window 1 (00:00-00:59)    Window 2 (01:00-01:59)    Window 3 (02:00-02:59)
@@ -126,8 +126,8 @@ Each entry creates a sub-rule named `{$name}:{$period}s`. Windows are evaluated 
 ```php
 // 3 req/s burst + 60 req/min sustained
 $config->throttles->multi('api', [
-    1  => 3,    // "api:1s" -- burst protection
-    60 => 60,   // "api:60s" -- sustained throughput
+    1  => 3,    // "api:1s" - burst protection
+    60 => 60,   // "api:60s" - sustained throughput
 ]);
 ```
 
@@ -171,7 +171,7 @@ $config->throttles->add(
 ```php
 use Psr\Http\Message\ServerRequestInterface;
 
-// Single rule handles all plans -- no need for separate rules per tier
+// Single rule handles all plans; no need for separate rules per tier
 $config->throttles->add(
     'api',
     fn(ServerRequestInterface $req): int => match ($req->getHeaderLine('X-Plan')) {
@@ -258,7 +258,7 @@ $config->throttles->add('per-endpoint', limit: 50, period: 60,
 
 ## Tiered Rate Limits
 
-Define multiple throttle rules with different limits for different use cases. All rules are evaluated independently -- a request must satisfy all of them.
+Define multiple throttle rules with different limits for different use cases. All rules are evaluated independently; a request must satisfy all of them.
 
 ```php
 use Flowd\Phirewall\Http\TrustedProxyResolver;
@@ -304,7 +304,7 @@ $config->throttles->add('search-endpoint',
 Enforce rate limits at the firewall on the client IP, which a caller cannot forge (behind a proxy, resolve it with `KeyExtractors::clientIp()` and a `TrustedProxyResolver`). Do not key a limit on a client-supplied header such as `X-User-Id` or `X-Api-Key`: a caller can rotate or drop it to land in a fresh counter on every request and never reach the limit. For genuine per-authenticated-user limits, enforce them behind your application's auth layer, where the user identity has been verified, rather than on a raw request header at the edge.
 
 ::: warning Header keys are client-controlled
-A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold — a trivial bypass. Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')` — the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold (a trivial bypass). Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')`: the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
 :::
 
 ## Rate Limit Headers
@@ -391,10 +391,10 @@ You can also set a global IP resolver so all IP-aware matchers use it automatica
 $config->setIpResolver(KeyExtractors::clientIp($resolver));
 ```
 
-The resolver's `allowedHeaders` argument now defaults to `['X-Forwarded-For']` (a single header) — pass `['Forwarded']` explicitly if your stack emits the RFC 7239 header. Only the last forwarded-header instance is parsed, and IPv6 addresses are canonicalized (IPv4-mapped peers match IPv4 rules). See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies) for the full 0.5.0 behavior.
+The resolver's `allowedHeaders` argument defaults to `['X-Forwarded-For']` (a single header); pass `['Forwarded']` explicitly if your stack emits the RFC 7239 header. All forwarded-header instances are folded into one chain and walked right to left, returning the first hop not in your trusted-proxy list (so the trusted-proxy ranges, not the number of header lines, are what prevent spoofing), and IPv6 addresses are canonicalized (IPv4-mapped peers match IPv4 rules). See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies) for the full behavior.
 
 ::: danger
-`KeyExtractors::ip()` keys on raw `REMOTE_ADDR` — behind a load balancer or CDN that is the proxy IP, so every client shares one throttle key and your limits stop working. Configure a `TrustedProxyResolver` so rate limits apply to the real client. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting entirely.
+`KeyExtractors::ip()` keys on raw `REMOTE_ADDR`; behind a load balancer or CDN that is the proxy IP, so every client shares one throttle key and your limits stop working. Configure a `TrustedProxyResolver` so rate limits apply to the real client. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting entirely.
 :::
 
 ## Events

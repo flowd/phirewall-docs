@@ -218,9 +218,7 @@ $redis = new PredisClient([
 
 ### Fail-Open Behavior
 
-RedisCache is designed to fail open. If Redis is unavailable, `increment()` returns `0`, which means no throttle or Fail2Ban rule will trigger. This prevents Redis outages from blocking all traffic to your application.
-
-When `increment()` catches a Redis error, it emits an `E_USER_WARNING` via `trigger_error()` before returning `0`. This gives you visibility into cache failures without breaking the request flow. You can capture these warnings in your application's error handler or logging setup:
+On a Redis error, `increment()` emits a diagnostic `E_USER_WARNING` via `trigger_error()` and then re-throws the underlying exception. Fail-open is applied one layer up: the middleware catches the error and, because `failOpen` is on by default (toggle it with `Config::setFailOpen()`), lets the request through and dispatches a `FirewallError` event. So a Redis outage does not block traffic under the default policy; with `setFailOpen(false)` the same outage fails closed and the exception surfaces as a 500. The warning message begins with `RedisCache::increment()`, so you can capture it in your application's error handler or logging setup:
 
 ```php
 set_error_handler(function (int $errno, string $message): bool {
@@ -339,7 +337,7 @@ CREATE INDEX idx_phirewall_expires ON phirewall_cache (expires_at);
 - Prepared statement caching for optimal performance
 - Full persistence across application and server restarts
 - Implements both `CacheInterface` and `CounterStoreInterface`
-- No additional dependencies -- uses PHP's built-in PDO extension
+- No additional dependencies - uses PHP's built-in PDO extension
 
 ### When to Use
 
@@ -440,22 +438,22 @@ phirewall.track.api-calls.<sha256 of "user-123">
 
 Use `$config->setKeyPrefix('myapp')` to change the prefix and avoid collisions when sharing a cache instance.
 
-::: warning Separator changed in 0.5.0 (`:` → `.`)
-Before 0.5.0 the segments were joined with `:`. PSR-16 reserves `:` for the *cache implementation*, not its callers, so `CacheKeyGenerator` (and the trusted-bot rDNS cache) now join segments with `.` to keep Phirewall's own keys spec-compliant. The visible effect on upgrade: throttle counters, fail2ban/allow2ban counters, the ban registry, and the rDNS cache are keyed differently, so these **ephemeral, TTL-bound entries reset once** — in-flight throttle windows restart and existing temporary bans are forgotten on the first deploy. There is **no security impact** (all affected data is short-lived and self-healing) and no API change. `RedisCache`'s own namespace prefix (default `Phirewall:`) is unaffected — it is the backend's keyspace, applied *after* the public key.
+::: tip Key segments join with `.`
+`CacheKeyGenerator` (and the trusted-bot rDNS cache) join key segments with `.` rather than `:`. PSR-16 reserves `:` for the *cache implementation*, not its callers, so joining with `.` keeps Phirewall's own keys spec-compliant. `RedisCache`'s own namespace prefix (default `Phirewall:`) is the backend's keyspace, applied *after* the public key, and is unaffected.
 :::
 
 See [Discriminator Normalizer](/advanced/discriminator-normalizer) for details on how keys are sanitized.
 
 ## Cache Key Validation (PSR-16)
 
-All four bundled backends — `InMemoryCache`, `ApcuCache`, `RedisCache`, and `PdoCache` — validate every key passed to their PSR-16 surface (`get`, `set`, `has`, `delete`, `getMultiple`, `setMultiple`, `deleteMultiple`). An invalid key throws `Flowd\Phirewall\Store\InvalidCacheKeyException`, which implements `Psr\SimpleCache\InvalidArgumentException` so it can be caught through the standard PSR-16 interface.
+All four bundled backends (`InMemoryCache`, `ApcuCache`, `RedisCache`, and `PdoCache`) validate every key passed to their PSR-16 surface (`get`, `set`, `has`, `delete`, `getMultiple`, `setMultiple`, `deleteMultiple`). An invalid key throws `Flowd\Phirewall\Store\InvalidCacheKeyException`, which implements `Psr\SimpleCache\InvalidArgumentException` so it can be caught through the standard PSR-16 interface.
 
 A key is rejected when it is:
 
 - an **empty string**;
-- a string containing a **reserved character** — any of `{}()/\@:` (the set PSR-16 reserves for cache implementations);
+- a string containing a **reserved character**: any of `{}()/\@:` (the set PSR-16 reserves for cache implementations);
 - a string containing a **control or whitespace character**; or
-- for the multi-key methods (`getMultiple` / `setMultiple` / `deleteMultiple`), a **non-string key** — previously these were silently cast to a string.
+- for the multi-key methods (`getMultiple` / `setMultiple` / `deleteMultiple`), a **non-string key**.
 
 ```php
 use Flowd\Phirewall\Store\InMemoryCache;
@@ -473,20 +471,20 @@ try {
 Per PSR-16 there is **no upper length limit**: keys longer than the mandated 64-character minimum remain valid. The rules live in a shared `KeyValidationTrait`, so they are identical across every bundled backend.
 
 ::: tip
-Phirewall's own keys never trip this validation — the [key structure](#cache-key-structure) above uses only safe characters, and the [discriminator normalizer](/advanced/discriminator-normalizer) sanitizes the variable part of each key. Validation matters mainly when you reuse a bundled backend as a general-purpose PSR-16 cache in your own code.
+Phirewall's own keys never trip this validation: the [key structure](#cache-key-structure) above uses only safe characters, and the [discriminator normalizer](/advanced/discriminator-normalizer) sanitizes the variable part of each key. Validation matters mainly when you reuse a bundled backend as a general-purpose PSR-16 cache in your own code.
 :::
 
 ## Monitoring
 
 ### Redis
 
-Redis keys have two layers of prefixing: the RedisCache namespace (default `Phirewall:`) and the firewall key prefix (default `phirewall`). For example, a throttle counter key looks like `Phirewall:phirewall.throttle.ip-limit.<sha256…>` — the `Phirewall:` namespace (note the reserved `:`, which only the backend may use) followed by the `.`-joined public key, whose final segment is the SHA-256 hex of the discriminator. You can change the Redis namespace via `new RedisCache($redis, 'custom:')` and the key prefix via `$config->setKeyPrefix('custom')`.
+Redis keys have two layers of prefixing: the RedisCache namespace (default `Phirewall:`) and the firewall key prefix (default `phirewall`). For example, a throttle counter key looks like `Phirewall:phirewall.throttle.ip-limit.<sha256…>`: the `Phirewall:` namespace (note the reserved `:`, which only the backend may use) followed by the `.`-joined public key, whose final segment is the SHA-256 hex of the discriminator. You can change the Redis namespace via `new RedisCache($redis, 'custom:')` and the key prefix via `$config->setKeyPrefix('custom')`.
 
 ```bash
 # Watch Phirewall keys in real-time
 redis-cli monitor | grep Phirewall
 
-# Count Phirewall keys (use SCAN in production -- see warning below)
+# Count Phirewall keys (use SCAN in production, see warning below)
 redis-cli keys "Phirewall:*" | wc -l
 
 # Check memory usage
@@ -496,7 +494,7 @@ redis-cli info memory
 redis-cli --scan --pattern "Phirewall:phirewall.throttle.ip-limit.*"
 ```
 
-You cannot look up a specific client by plaintext IP — the discriminator segment is hashed.
+You cannot look up a specific client by plaintext IP; the discriminator segment is hashed.
 
 ::: danger
 The `KEYS` command scans every key in Redis and blocks the server during execution. **Never use `KEYS` in production.** Use `SCAN` with a cursor instead:

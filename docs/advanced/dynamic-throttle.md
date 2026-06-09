@@ -130,7 +130,7 @@ $config->throttles->sliding('api-sliding',
 );
 ```
 
-The method signature is identical to `add()` -- the only difference is the internal algorithm. Sliding windows also support dynamic `limit` and `period` closures.
+The method signature is identical to `add()`; the only difference is the internal algorithm. Sliding windows also support dynamic `limit` and `period` closures.
 
 ### Fixed vs. Sliding Comparison
 
@@ -142,7 +142,7 @@ The method signature is identical to `add()` -- the only difference is the inter
 | Best for | Simple rate limiting, internal APIs | Public APIs, strict limit enforcement |
 
 ::: tip
-The sliding window algorithm is not atomic under high concurrency -- a small number of requests may slip through at the exact moment the threshold is crossed. This is acceptable for rate limiting, which is a fairness mechanism, not a security boundary. For hard security limits, use [Fail2Ban](/features/fail2ban) or [Allow2Ban](/features/fail2ban#allow2ban).
+The sliding window algorithm is not atomic under high concurrency; a small number of requests may slip through at the exact moment the threshold is crossed. This is acceptable for rate limiting, which is a fairness mechanism, not a security boundary. For hard security limits, use [Fail2Ban](/features/fail2ban) or [Allow2Ban](/features/fail2ban#allow2ban).
 :::
 
 ## Multi-Window Throttling
@@ -258,8 +258,8 @@ $config->throttles->add('anonymous',
 );
 ```
 
-::: tip
-Your authentication middleware should set `X-User-Id` and `X-Plan` headers on the PSR-7 request before it reaches the Phirewall middleware. This keeps rate limiting configuration clean and decoupled from authentication logic.
+::: warning Tier and identity headers must come from your auth layer
+`X-User-Id` and `X-Plan` are read straight from the request. A client can send `X-Plan: enterprise` to self-grant the highest limit, or rotate `X-User-Id` to dodge a per-user limit. Set these headers in your authentication middleware **after** it has verified the principal and before the request reaches Phirewall, and strip or overwrite any inbound copy at the trusted edge. Looking the tier up from a verified identity, rather than trusting a request header, avoids this entirely.
 :::
 
 ## Per-Endpoint Cost
@@ -390,7 +390,7 @@ $firewall->resetAll();
 
 ## Related Pages
 
-- [Rate Limiting](/features/rate-limiting) -- basic throttle setup and rate limit headers
-- [Observability](/advanced/observability) -- `ThrottleExceeded` events and metrics
-- [Safelists & Blocklists](/features/safelists-blocklists) -- bypass all rules for trusted traffic
-- [Track & Notifications](/advanced/track-notifications) -- passive counting for monitoring
+- [Rate Limiting](/features/rate-limiting) - basic throttle setup and rate limit headers
+- [Observability](/advanced/observability) - `ThrottleExceeded` events and metrics
+- [Safelists & Blocklists](/features/safelists-blocklists) - bypass all rules for trusted traffic
+- [Track & Notifications](/advanced/track-notifications) - passive counting for monitoring

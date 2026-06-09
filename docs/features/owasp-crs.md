@@ -148,7 +148,7 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `id:N` | Rule ID (required, must be unique) |
 | `phase:N` | Processing phase (currently informational) |
 | `deny` | Block the request (required for the rule to trigger blocking) |
-| `block` | Alias for `deny` -- both trigger blocking |
+| `block` | Alias for `deny`, both trigger blocking |
 | `msg:'text'` | Human-readable description for logging |
 
 ### Line Continuation
@@ -358,7 +358,7 @@ insert into
 ```
 
 ::: warning
-`@pmFromFile` paths are resolved relative to the rule file's directory, and `..` traversal segments are rejected. Treat SecRule files as trusted operator configuration — never build rule text from untrusted input, since the operand selects which file is read.
+`@pmFromFile` paths are resolved relative to the rule file's directory, and `..` traversal segments are rejected. Treat SecRule files as trusted operator configuration; never build rule text from untrusted input, since the operand selects which file is read.
 :::
 
 ## Architecture
@@ -412,7 +412,7 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 Unsupported operators resolve to `UnsupportedOperatorEvaluator`, which never matches (safe no-op).
 
 ::: warning ReDoS protection: 8 KiB length guard on `@rx`
-`RegexEvaluator` skips any value whose byte length exceeds 8,192 bytes — the value is treated as non-matching. This is an intentional trade-off: running PCRE on unbounded attacker-controlled input risks catastrophic backtracking that can freeze the PHP process (ReDoS). Skipping overlength values mirrors the behavior of standard WAFs such as ModSecurity's `SecRequestBodyLimit`.
+`RegexEvaluator` skips any value whose byte length exceeds 8,192 bytes; the value is treated as non-matching. This is an intentional trade-off: running PCRE on unbounded attacker-controlled input risks catastrophic backtracking that can freeze the PHP process (ReDoS). Skipping overlength values mirrors the behavior of standard WAFs such as ModSecurity's `SecRequestBodyLimit`.
 
 In practice, legitimate request values (query parameters, header values, cookie values) are rarely larger than a few kilobytes. If you are matching multi-megabyte request bodies via `@rx`, consider pre-processing them before passing to the firewall.
 :::

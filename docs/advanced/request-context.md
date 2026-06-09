@@ -4,7 +4,7 @@ outline: deep
 
 # Request Context
 
-The `RequestContext` API lets your application signal post-handler events -- fail2ban **failures** via `recordFailure()` and allow2ban **hits** via `recordHit()` -- **from inside the request handler**, after the firewall has already passed the request through. This solves a fundamental limitation: standard fail2ban and allow2ban filters run _before_ your handler, so they cannot see whether credentials were valid, whether a payment failed, or whether an API key was revoked.
+The `RequestContext` API lets your application signal post-handler events (fail2ban **failures** via `recordFailure()` and allow2ban **hits** via `recordHit()`) **from inside the request handler**, after the firewall has already passed the request through. This solves a fundamental limitation: standard fail2ban and allow2ban filters run _before_ your handler, so they cannot see whether credentials were valid, whether a payment failed, or whether an API key was revoked.
 
 ## The Problem
 
@@ -47,7 +47,7 @@ Here is what happens step by step:
 
 ## Setup
 
-Configure a fail2ban rule with a filter that **always returns `false`**. This means the firewall never counts failures automatically -- your handler does it instead:
+Configure a fail2ban rule with a filter that **always returns `false`**. This means the firewall never counts failures automatically; your handler does it instead:
 
 ```php
 use Flowd\Phirewall\Config;
@@ -58,7 +58,7 @@ use Psr\Http\Message\ServerRequestInterface;
 
 $config = new Config(new InMemoryCache());
 
-// The filter returns false -- no request is counted automatically.
+// The filter returns false; no request is counted automatically.
 // Failures are recorded programmatically via RequestContext in your handler.
 $config->fail2ban->add('login-failures',
     threshold: 3,
@@ -71,12 +71,12 @@ $middleware = new Middleware($config);
 ```
 
 ::: tip Why `filter: fn() => false`?
-The filter still exists because the fail2ban rule requires one. Setting it to always return `false` means the pre-handler phase never counts any request as a failure -- all failure counting is deferred to your handler via `RequestContext`.
+The filter still exists because the fail2ban rule requires one. Setting it to always return `false` means the pre-handler phase never counts any request as a failure; all failure counting is deferred to your handler via `RequestContext`.
 :::
 
 ## Recording Failures in Your Handler
 
-Retrieve the `RequestContext` from the request attribute and call `recordFailure()`. The second argument is optional -- when omitted, the firewall reuses the rule's own `keyExtractor` against this request, so the handler doesn't need to know whether the rule keys on IP, header, or anything else:
+Retrieve the `RequestContext` from the request attribute and call `recordFailure()`. The second argument is optional: when omitted, the firewall reuses the rule's own `keyExtractor` against this request, so the handler doesn't need to know whether the rule keys on IP, header, or anything else:
 
 ```php
 use Flowd\Phirewall\Context\RequestContext;
@@ -96,7 +96,7 @@ class LoginHandler implements RequestHandlerInterface
             /** @var RequestContext|null $context */
             $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 
-            // Signal the failure -- the firewall derives the key from the
+            // Signal the failure; the firewall derives the key from the
             // rule's own keyExtractor. Use the null-safe operator for safety.
             $context?->recordFailure('login-failures');
 
@@ -120,9 +120,9 @@ The first parameter to `recordFailure()` must **exactly** match the `name` you u
 
 ## Recording allow2ban Hits
 
-`recordHit()` is the allow2ban counterpart of `recordFailure()`. The same context records **allow2ban** hits -- use it to count handler-observable events the pre-handler path cannot see (an expensive operation completed, a webhook delivered a duplicate payload, a third-party API quota was charged) so the count can drive an allow2ban threshold ban. It mirrors `recordFailure()`, and `$key` is likewise optional -- omit it to reuse the matching rule's key extractor on the current request.
+`recordHit()` is the allow2ban counterpart of `recordFailure()`. The same context records **allow2ban** hits: use it to count handler-observable events the pre-handler path cannot see (an expensive operation completed, a webhook delivered a duplicate payload, a third-party API quota was charged) so the count can drive an allow2ban threshold ban. It mirrors `recordFailure()`, and `$key` is likewise optional: omit it to reuse the matching rule's key extractor on the current request.
 
-First, configure an allow2ban rule. To make the rule count *only* the events recorded by the handler (not every request), have the rule's `keyExtractor` return `null` pre-handler -- the firewall then skips counting until the handler signals an explicit key via `recordHit()`:
+First, configure an allow2ban rule. To make the rule count *only* the events recorded by the handler (not every request), have the rule's `keyExtractor` return `null` pre-handler; the firewall then skips counting until the handler signals an explicit key via `recordHit()`:
 
 ```php
 use Flowd\Phirewall\KeyExtractors;
@@ -147,7 +147,7 @@ if ($context !== null && $this->operationWasExpensive($request)) {
 }
 ```
 
-If the rule's `keyExtractor` returns a value pre-handler (the common case), the second argument to `recordHit()` can be omitted -- the firewall derives the key the same way it does for `recordFailure()`:
+If the rule's `keyExtractor` returns a value pre-handler (the common case), the second argument to `recordHit()` can be omitted; the firewall derives the key the same way it does for `recordFailure()`:
 
 ```php
 // Omitting $key reuses the rule's own key extractor on this request.
@@ -185,7 +185,7 @@ Both methods take the same parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$ruleName` | `string` | Must match the `name` of a configured `fail2ban->add()` rule (for `recordFailure()`) or `allow2ban->add()` rule (for `recordHit()`) |
-| `$key` | `?string` | The discriminator key to count against (e.g., IP address, username). **Optional** -- when omitted (`null`), the firewall applies the matching rule's own key extractor to the current request, so your handler does not need to repeat the rule's keying logic. |
+| `$key` | `?string` | The discriminator key to count against (e.g., IP address, username). **Optional**: when omitted (`null`), the firewall applies the matching rule's own key extractor to the current request, so your handler does not need to repeat the rule's keying logic. |
 
 ### RecordedSignal
 
@@ -231,7 +231,7 @@ $context?->recordFailure('login-failures');
 $context?->recordHit('expensive-endpoint');
 ```
 
-If the middleware is not present, `$context` is `null` and the calls are silently skipped -- no errors, no side effects. This makes your handler safe to use with or without Phirewall.
+If the middleware is not present, `$context` is `null` and the calls are silently skipped: no errors, no side effects. This makes your handler safe to use with or without Phirewall.
 
 ## Complete Example
 
@@ -407,7 +407,7 @@ class RequestContextTest extends TestCase
 
 ## Related Pages
 
-- [Fail2Ban & Allow2Ban](/features/fail2ban) -- fail2ban rule configuration and filter predicates
-- [Track & Notifications](/advanced/track-notifications) -- passive counting without blocking
-- [Observability](/advanced/observability) -- events and diagnostics
-- [Getting Started](/getting-started) -- full setup walkthrough
+- [Fail2Ban & Allow2Ban](/features/fail2ban) - fail2ban rule configuration and filter predicates
+- [Track & Notifications](/advanced/track-notifications) - passive counting without blocking
+- [Observability](/advanced/observability) - events and diagnostics
+- [Getting Started](/getting-started) - full setup walkthrough

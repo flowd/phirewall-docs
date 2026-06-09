@@ -8,8 +8,8 @@ Phirewall generates HTTP responses (`403 Forbidden`, `429 Too Many Requests`) wh
 
 There are two layers of response customization:
 
-1. **Base response factory** -- the `ResponseFactoryInterface` used by the `Middleware` to create bare responses (status code + headers). Auto-detected or injected explicitly.
-2. **Custom response factories** -- optional `BlocklistedResponseFactoryInterface` and `ThrottledResponseFactoryInterface` on `Config` that produce complete responses with body text, content negotiation, etc.
+1. **Base response factory** - the `ResponseFactoryInterface` used by the `Middleware` to create bare responses (status code + headers). Auto-detected or injected explicitly.
+2. **Custom response factories** - optional `BlocklistedResponseFactoryInterface` and `ThrottledResponseFactoryInterface` on `Config` that produce complete responses with body text, content negotiation, etc.
 
 ## Auto-Detection
 
@@ -328,7 +328,7 @@ $config->usePsr17Responses($psr17, $psr17);
 $config->blocklistedResponseFactory = new Psr17BlocklistedResponseFactory(
     $psr17,
     $psr17,
-    'Access Denied -- your request has been blocked.',
+    'Access Denied - your request has been blocked.',
 );
 $config->throttledResponseFactory = new Psr17ThrottledResponseFactory(
     $psr17,
@@ -474,7 +474,7 @@ $psr17 = new Psr17Factory();
 $config->usePsr17Responses($psr17, $psr17);
 // ... configure rules ...
 
-// Mezzio uses PSR-15 natively -- pipe first
+// Mezzio uses PSR-15 natively - pipe first
 $app->pipe(new Middleware($config, $psr17));
 ```
 

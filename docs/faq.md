@@ -63,13 +63,13 @@ Phirewall is dual licensed under LGPL-3.0-or-later and a proprietary license. Se
 
 Phirewall evaluates rules in a strict, deterministic order. The first match wins:
 
-1. **Track** -- passive counting, never blocks
-2. **Safelist** -- if matched, bypass all other checks (returns 200)
-3. **Blocklist** -- if matched, returns 403 Forbidden
-4. **Fail2Ban** -- if already banned, 403; if filter matches, increment failure counter
-5. **Throttle** -- if counter exceeds limit, returns 429 Too Many Requests
-6. **Allow2Ban** -- if threshold exceeded, returns 403
-7. **Pass** -- request reaches your application
+1. **Track**: passive counting, never blocks
+2. **Safelist**: if matched, bypass all other checks (returns 200)
+3. **Blocklist**: if matched, returns 403 Forbidden
+4. **Fail2Ban**: if already banned, 403; if filter matches, increment the failure counter
+5. **Throttle**: if counter exceeds limit, returns 429 Too Many Requests
+6. **Allow2Ban**: if threshold exceeded, returns 403
+7. **Pass**: request reaches your application
 
 ### How do I handle trusted proxies?
 
@@ -97,16 +97,16 @@ $config->throttles->add('api', limit: 100, period: 60,
 );
 ```
 
-A few 0.5.0 specifics:
+A few details worth knowing:
 
 - **`allowedHeaders` defaults to `['X-Forwarded-For']`** (a single header). If your stack emits the RFC 7239 `Forwarded` header, pass it explicitly: `new TrustedProxyResolver([...], ['Forwarded'])`.
-- **Only the last `X-Forwarded-For` / `Forwarded` instance is trusted** — a duplicate header line prepended by a client is ignored.
-- **IPv6 is canonicalized** — IPv4-mapped peers (`::ffff:1.2.3.4`) match IPv4 rules, and alternate IPv6 spellings are treated as one identity by `ip()` / CIDR list matching (rate-limit and ban keys use the spelling the resolver returns).
+- **All `X-Forwarded-For` / `Forwarded` instances are folded into one chain**, which the resolver walks right to left, returning the first hop not in your trusted-proxy list. The protection is this trusted-hop walk (and reading proxy headers only when the direct peer is itself trusted), not discarding duplicate lines.
+- **IPv6 is canonicalized**: IPv4-mapped peers (`::ffff:1.2.3.4`) match IPv4 rules, and alternate IPv6 spellings are treated as one identity by `ip()` / CIDR list matching (rate-limit and ban keys use the spelling the resolver returns).
 
 See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies) for the full behavior.
 
 ::: danger
-`KeyExtractors::ip()` reads `REMOTE_ADDR`, which behind a CDN or load balancer is the *proxy's* address — so every client collapses onto one key. Always install a client-IP resolver in that case. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting.
+`KeyExtractors::ip()` reads `REMOTE_ADDR`, which behind a CDN or load balancer is the *proxy's* address, so every client collapses onto one key. Always install a client-IP resolver in that case. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting.
 :::
 
 ### What happens when the cache backend is unavailable?
@@ -185,36 +185,9 @@ $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 $context?->recordFailure('login-failures');
 ```
 
-The second argument to `recordFailure()` is optional -- when omitted, the firewall extracts the discriminator key from the rule's own `keyExtractor`. The matching Fail2Ban rule should use `filter: fn($request): bool => false` so it only counts failures signaled programmatically.
+The second argument to `recordFailure()` is optional; when omitted, the firewall extracts the discriminator key from the rule's own `keyExtractor`. The matching Fail2Ban rule should use `filter: fn($request): bool => false` so it only counts failures signaled programmatically.
 
-For allow2ban rules, use `$context->recordHit('rule-name')` -- same shape, routed through the allow2ban evaluator instead.
-
-### The old fluent API methods are gone — what do I use now?
-
-The deprecated convenience methods (`$config->safelist()`, `$config->throttle()`, etc.) have been removed. Use the section API instead:
-
-```php
-// Old (removed)
-$config->safelist('health', fn($request) => ...);
-$config->throttle('ip', 100, 60, fn($request) => ...);
-$config->fail2ban('login', 5, 300, 3600, filter: ..., key: ...);
-
-// New (section API)
-$config->safelists->add('health', fn($request) => ...);
-$config->throttles->add('ip', 100, 60, fn($request) => ...);
-$config->fail2ban->add('login', threshold: 5, period: 300, ban: 3600, filter: ..., key: ...);
-```
-
-See the [Getting Started](/getting-started) guide for the full section API reference.
-
-### What changed in 0.5.0 that affects an upgrade?
-
-A few behaviour changes can affect an existing deployment on upgrade:
-
-- **`isBanned()` now requires a `BanType`.** Both `Http\Firewall::isBanned()` and `BanManager::isBanned()` take a mandatory third argument `BanType $banType` (no default), because allow2ban and fail2ban bans live under distinct cache keys. Update any 2-argument call to pass `BanType::Fail2Ban` or `BanType::Allow2Ban`.
-- **Cache-key separator changed from `:` to `.`.** Existing throttle/fail2ban counters and active bans are keyed with the old separator, so on the first deploy they are orphaned: counters reset and currently-banned clients are briefly un-banned. This is a one-time effect that self-heals as new keys are written; orphaned entries expire by TTL. Bump your `keyPrefix` or drain the cache on deploy if you want a clean cut.
-- **`setKeyPrefix()` rejects reserved/control/whitespace characters.** A colon-namespaced prefix such as `app:prod` now throws `InvalidArgumentException`; use `app.prod` (see [Discriminator Normalizer](/advanced/discriminator-normalizer)). The cache backends likewise throw `InvalidCacheKeyException` on reserved, empty, or control keys.
-- **`TrustedProxyResolver` defaults to a single header.** `allowedHeaders` now defaults to `['X-Forwarded-For']` only. If your upstream emits RFC 7239, pass `['Forwarded']` or `['Forwarded', 'X-Forwarded-For']` explicitly (see [How do I handle trusted proxies?](#how-do-i-handle-trusted-proxies)).
+For allow2ban rules, use `$context->recordHit('rule-name')`, same shape, routed through the allow2ban evaluator instead.
 
 ## Rate Limiting
 
@@ -222,9 +195,9 @@ A few behaviour changes can affect an existing deployment on upgrade:
 
 Phirewall supports three throttling strategies:
 
-- **Fixed window** (`add()`) -- time is divided into fixed intervals. Simple and fast, but allows double bursts at period boundaries.
-- **Sliding window** (`sliding()`) -- uses a weighted average of current and previous window to provide smooth rate enforcement. Prevents the "double burst" problem.
-- **Multi-window** (`multi()`) -- registers multiple time windows in a single call. Useful for setting both burst limits (short window) and sustained limits (long window).
+- **Fixed window** (`add()`): time is divided into fixed intervals. Simple and fast, but allows double bursts at period boundaries.
+- **Sliding window** (`sliding()`): uses a weighted average of current and previous window to provide smooth rate enforcement. Prevents the "double burst" problem.
+- **Multi-window** (`multi()`): registers multiple time windows in a single call. Useful for setting both burst limits (short window) and sustained limits (long window).
 
 See [Dynamic Throttle](/advanced/dynamic-throttle) for details.
 
@@ -247,7 +220,7 @@ $config->throttles->multi('api', [
 
 ### What happens when a throttle key returns `null`?
 
-The rule is **skipped entirely** for that request -- as if the rule did not exist. This is the primary mechanism for conditional rate limits. For example, return `null` for admin users to exempt them from rate limiting.
+The rule is **skipped entirely** for that request, as if the rule did not exist. This is the primary mechanism for conditional rate limits. For example, return `null` for admin users to exempt them from rate limiting.
 
 ### Are rate limit counters atomic?
 
@@ -274,6 +247,8 @@ $config->throttles->add('api',
     key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
+
+Set `X-Plan` in your authentication layer after verifying the principal, and strip any inbound copy at the edge; otherwise a client can send `X-Plan: enterprise` to grant itself the top limit.
 
 See [Dynamic Throttle: Per-User Tier Limits](/advanced/dynamic-throttle#per-user-tier-limits) for more patterns.
 
@@ -463,7 +438,7 @@ $firewall->resetThrottle('api', '192.168.1.100');
 // Lift a specific fail2ban ban (also clears its fail counter)
 $firewall->resetFail2Ban('login-failures', '192.168.1.100');
 
-// Check whether a key is currently banned (BanType is required as of 0.5.0)
+// Check whether a key is currently banned (BanType is required)
 $banned = $firewall->isBanned('login-failures', '192.168.1.100', BanType::Fail2Ban);
 
 // Reset all counters and bans
