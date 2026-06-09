@@ -86,10 +86,6 @@ $config->fail2ban->add('login-brute-force',
 Counting every POST to `/login` is simpler and works well for most applications. Legitimate users who log in successfully within the threshold are unaffected. Set a generous enough threshold (5-10) so users who mistype their password are not banned.
 :::
 
-::: tip Skip the boilerplate with a preset
-The [`loginProtection()` preset](/advanced/presets) bundles a login throttle and a brute-force fail2ban rule, ready to compose with your own `Config`. See [Presets](/advanced/presets).
-:::
-
 ### Credential Stuffing Defense
 
 Credential stuffing uses stolen username/password lists from data breaches. Defend against it by combining IP-based banning with user-based throttling:

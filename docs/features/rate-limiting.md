@@ -14,10 +14,6 @@ Three throttle strategies are available:
 | **Sliding window** | `sliding()` | Smooth rate limits without double-burst |
 | **Multi-window** | `multi()` | Combined burst + sustained limits |
 
-::: tip
-For a ready-made per-client API rate limit (burst + sustained, scoped to `/api`), the [`apiRateLimiting()` preset](/advanced/presets) ships the rules below pre-configured.
-:::
-
 ::: tip Default key
 The `key` argument on `add()`, `sliding()`, and `multi()` is optional. When omitted, the throttle keys on the client IP resolved by the Config's IP resolver (set via `Config::setIpResolver(KeyExtractors::clientIp($trustedProxyResolver))` behind a proxy), falling back to `KeyExtractors::ip()` (REMOTE_ADDR) when none is set. The resolver is read per request, so it can be set before or after adding rules. The examples below omit `key:` to use this default; pass an explicit `key:` only to key on something other than the client IP (a header, a username, and so on).
 :::
