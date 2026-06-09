@@ -40,36 +40,6 @@ if (!$this->authenticate($username, $password)) {
 
 Only genuine failures are counted, so a user who logs in correctly on the first try is never one attempt closer to a ban.
 
-### Fail2Ban on a Request Marker
-
-If you cannot integrate `RequestContext` (for example, the auth check lives in a separate service), a fail2ban filter can count a marker header instead. The filter inspects the **incoming request**, so the marker must be set by a **trusted middleware that runs before Phirewall**, never by the login handler, which runs *after* the firewall and can only set *response* headers that the pre-handler filter will never see:
-
-```php
-use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
-use Flowd\Phirewall\Store\RedisCache;
-use Psr\Http\Message\ServerRequestInterface;
-
-$config = new Config(new RedisCache($redis));
-
-// Ban after 5 marked failures in 5 minutes for 1 hour.
-$config->fail2ban->add('login-brute-force',
-    threshold: 5,
-    period: 300,
-    ban: 3600,
-    filter: fn(ServerRequestInterface $req): bool =>
-        $req->getMethod() === 'POST'
-        && $req->getUri()->getPath() === '/login'
-        && $req->getHeaderLine('X-Login-Failed') === '1',
-);
-```
-
-The `X-Login-Failed` **request** header must be set by a trusted upstream component **before** Phirewall evaluates the request, not by the login handler, which runs *after* the firewall and can only set response headers the pre-handler filter never sees.
-
-::: warning
-Trust the `X-Login-Failed` marker only if an upstream component your application controls sets it, and strip any inbound copy of that header at the edge, so a client cannot forge it. If that component is a PSR-15 middleware in the same application, set a request attribute (`$request->withAttribute('loginFailed', true)`) instead of a header, which a client cannot forge at all; a header is only necessary when the marker comes from a separate upstream service. When in doubt, prefer the post-handler `RequestContext` approach above.
-:::
-
 ### Login Endpoint Throttle
 
 Add a rate limit specifically on the login path to slow down attackers:
@@ -483,12 +453,12 @@ CRS);
 $config->blocklists->owasp('owasp', $rules);
 
 // ── Layer 4: Fail2Ban ─────────────────────────────────────────────────
+// The filter never matches pre-handler; your login handler signals each
+// verified failure with $context->recordFailure('login-brute-force').
+// See Brute Force Login above.
 $config->fail2ban->add('login-brute-force',
     threshold: 5, period: 300, ban: 3600,
-    // X-Login-Failed must be set by trusted middleware and any inbound copy
-    // stripped at the edge (see Brute Force Login above); otherwise prefer the
-    // post-handler RequestContext::recordFailure() pattern.
-    filter: fn($req): bool => $req->getHeaderLine('X-Login-Failed') === '1',
+    filter: fn($req): bool => false,
 );
 
 // ── Layer 5: Throttling ───────────────────────────────────────────────

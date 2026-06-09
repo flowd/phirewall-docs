@@ -33,7 +33,7 @@ $portable = PortableConfig::create()
     ->blocklist('bad-net', PortableConfig::filterIp(['203.0.113.0/24']))
     ->throttle('api', limit: 100, period: 60, key: PortableConfig::keyHashedHeader('X-Api-Key'), sliding: true)
     ->allow2ban('volume-cap', threshold: 1000, period: 60, ban: 300, key: PortableConfig::keyIp())
-    ->fail2ban('login', threshold: 5, period: 60, ban: 900, filter: PortableConfig::filterHeaderEquals('X-Login-Failed', '1'), key: PortableConfig::keyIp())
+    ->fail2ban('wp-login-probe', threshold: 5, period: 60, ban: 900, filter: PortableConfig::filterPathEquals('/wp-login.php'), key: PortableConfig::keyIp())
     ->patternBlocklist('threats', [
         PortableConfig::patternEntry(PatternKind::CIDR, '10.66.0.0/16'),
         PortableConfig::patternEntry(PatternKind::PATH_REGEX, '#/\.git(/|$)#'),
@@ -46,8 +46,6 @@ $json = json_encode($portable->toArray(), JSON_THROW_ON_ERROR);
 $config   = (new Config($cache))->combine(PortableConfig::fromArray(json_decode($json, true, 512, JSON_THROW_ON_ERROR)));
 $firewall = new Firewall($config);
 ```
-
-(A request-header marker is forgeable; for real login-failure bans prefer the post-handler [`RequestContext::recordFailure()`](/advanced/request-context) pattern.)
 
 `fromArray()` validates the *shape* of the data (rule/filter/key types, regex patterns compile, pattern-entry fields) and throws `InvalidArgumentException` on anything malformed. It does **not** verify *authenticity*; for that, see [Signed transport](#signed-transport).
 
