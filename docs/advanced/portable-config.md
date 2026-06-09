@@ -145,7 +145,7 @@ $portable = PortableConfig::loadSigned($store->load(), $secret);
 $firewall = new Firewall((new Config($cache))->combine($portable));
 ```
 
-Under classic PHP-FPM each request is a fresh process, so this runs once per request and always reflects the current rules. To avoid querying the database on every request, put a shared cache (APCu, for example) in front of the store.
+Under classic PHP-FPM userland state does not carry over between requests, so this runs once per request and always reflects the current rules. To avoid querying the database on every request, put a shared cache (APCu, for example) in front of the store.
 
 ### Long-running workers
 
