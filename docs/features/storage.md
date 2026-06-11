@@ -33,7 +33,7 @@ $config = new Config($cache);
 ### Characteristics
 
 - Zero external dependencies
-- Data resets on every request in PHP-FPM (each request is a new process)
+- Data resets on every request in PHP-FPM (userland state does not persist between requests)
 - Under long-running worker runtimes (Swoole, RoadRunner, FrankenPHP worker mode, Octane) the array lives for the worker's lifetime: state is **not** shared across workers (each worker is a separate process, so counters and bans fragment) and the array only evicts already-expired entries, so it is not a memory cap. This makes it unsafe as a firewall store there; see the warning below.
 - Implements both `CacheInterface` (PSR-16) and `CounterStoreInterface`
 - Automatic expired entry purging every 1000 operations

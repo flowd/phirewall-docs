@@ -274,7 +274,7 @@ Yes, Phirewall accepts any PSR-16 (PHP Standard Recommendation for Simple Cachin
 
 ### Why does InMemoryCache not work in production?
 
-In PHP-FPM (FastCGI Process Manager), each request starts a new process (or reuses one from the pool). The in-memory cache is empty at the start of each request, so counters always reset to zero. This means rate limits and ban counters never accumulate.
+In PHP-FPM (FastCGI Process Manager), worker processes are pooled and reused across requests, but PHP tears down userland state at the end of each request. The in-memory cache therefore starts empty on every request, so counters always reset to zero. This means rate limits and ban counters never accumulate.
 
 Under long-running worker runtimes (Swoole, RoadRunner, FrankenPHP worker mode, Octane) the failure is the opposite and easy to miss: the array survives across requests within a worker, so a single-worker demo looks like it "works", but each worker is a separate process with its own array. State is never shared across workers (counters and bans fragment, so the effective rate limit is roughly N times the configured value) and the array grows for the worker's lifetime.
 
