@@ -95,32 +95,47 @@ $config->safelists->ip('ipv6-loopback', '::1');
 
 ### Trusted Bot Verification
 
-Safelist verified search engine bots via reverse DNS verification. See [Bot Detection](/features/bot-detection) for full details.
+Safelist verified search engine bots via reverse DNS verification. Wire `TrustedBotMatcher` onto the safelist with `addRule()`. See [Bot Detection](/features/bot-detection) for full details, and [Trusted Bots](/features/trusted-bots) for the matcher itself.
 
 ```php
-$config->safelists->trustedBots(
-    string $name = 'trusted-bots',
-    array $additionalBots = [],
-    ?callable $ipResolver = null,
-    ?CacheInterface $cache = null
-): SafelistSection
+use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
+
+$config->safelists->addRule(new SafelistRule($name, new TrustedBotMatcher(
+    additionalBots: [],
+    ipResolver: $config->getIpResolver(),
+    cache: null,
+)));
 ```
 
+Pass `ipResolver: $config->getIpResolver()` so verification uses the real client IP behind a proxy, matching the [global IP resolver](#ip-resolution).
+
 ```php
+use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
+
 // Safelist Google, Bing, Yahoo, Baidu, DuckDuckGo, Yandex, and Apple bots
-$config->safelists->trustedBots();
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
+    ipResolver: $config->getIpResolver(),
+)));
 
 // Add custom bots on top of the built-in list
-$config->safelists->trustedBots('bots', [
+$config->safelists->addRule(new SafelistRule('bots', new TrustedBotMatcher([
     ['ua' => 'mypartnerbot', 'hostname' => '.partner.example.com'],
-]);
+], ipResolver: $config->getIpResolver())));
 ```
 
 ::: warning
 Without a PSR-16 cache, each request with a bot-like User-Agent triggers blocking DNS lookups. In production, always provide a cache:
 
 ```php
-$config->safelists->trustedBots(cache: $cache);
+use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
+
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
+    ipResolver: $config->getIpResolver(),
+    cache: $cache,
+)));
 ```
 :::
 
@@ -322,17 +337,19 @@ This file holds live security state. Store it **outside your web document root**
 
 ### OWASP Core Rule Set
 
-Register OWASP CRS rules as a blocklist to detect SQL injection, XSS, and other attacks:
+Register OWASP CRS rules as a blocklist to detect SQL injection, XSS, and other attacks. The SecRule engine ships in the companion package `flowd/phirewall-preset-owasp-crs` (`composer require flowd/phirewall-preset-owasp-crs`):
 
 ```php
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 
 $rules = SecRuleLoader::fromString(<<<'CRS'
 SecRule ARGS "@rx (?i)\bunion\b.*\bselect\b" "id:942100,phase:2,deny,msg:'SQLi'"
 SecRule ARGS "@rx (?i)<script[^>]*>" "id:941100,phase:2,deny,msg:'XSS'"
 CRS);
 
-$config->blocklists->owasp('owasp', $rules);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
 ```
 
 See [OWASP CRS](/features/owasp-crs) for full details on loading rules from files and directories.

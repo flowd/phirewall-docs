@@ -11,11 +11,11 @@ outline: deep
 - **diff and review it in git**, or
 - **share one ruleset across many apps, processes, or languages**
 
-…and then materialize a live [`Config`](/getting-started) from it with [`Config::combine()`](/advanced/config-composition); the schema is pure data and never carries a cache. Closures are never serialized, so the surface is intentionally a safe, declarative subset (see [Not portable by design](#not-portable-by-design)).
+…and then apply it onto a live [`Config`](/getting-started) with [`Config::with()`](/advanced/config-composition); the schema is pure data and never carries a cache. A `PortableConfig` is a [`ConfigLayer`](/advanced/config-composition), so it composes through the same `with()` call as any other layer. Closures are never serialized, so the surface is intentionally a safe, declarative subset (see [Not portable by design](#not-portable-by-design)).
 
 ## Building and round-tripping
 
-Build a ruleset fluently, export it with `toArray()` (or `json_encode()` the result), and rebuild it with `fromArray()`, then materialize it onto a `Config` with `Config::combine()`:
+Build a ruleset fluently, export it with `toArray()` (or `json_encode()` the result), and rebuild it with `fromArray()`, then apply it onto a `Config` with `Config::with()`:
 
 ```php
 use Flowd\Phirewall\Config;
@@ -43,7 +43,7 @@ $portable = PortableConfig::create()
 $json = json_encode($portable->toArray(), JSON_THROW_ON_ERROR);
 
 // … and rebuild a live Config somewhere else.
-$config   = (new Config($cache))->combine(PortableConfig::fromArray(json_decode($json, true, 512, JSON_THROW_ON_ERROR)));
+$config   = (new Config($cache))->with(PortableConfig::fromArray(json_decode($json, true, 512, JSON_THROW_ON_ERROR)));
 $firewall = new Firewall($config);
 ```
 
@@ -142,7 +142,7 @@ use Flowd\Phirewall\Portable\PortableConfig;
 
 // $store->load() returns the signed blob from your DB / cache / config service.
 $portable = PortableConfig::loadSigned($store->load(), $secret);
-$firewall = new Firewall((new Config($cache))->combine($portable));
+$firewall = new Firewall((new Config($cache))->with($portable));
 ```
 
 Under classic PHP-FPM userland state does not carry over between requests, so this runs once per request and always reflects the current rules. To avoid querying the database on every request, put a shared cache (APCu, for example) in front of the store.
@@ -156,7 +156,7 @@ Under a long-running worker runtime (Swoole, RoadRunner, FrankenPHP worker mode,
 $row = $store->load();
 if ($loadedVersion !== $row['version']) {
     $portable = PortableConfig::loadSigned($row['blob'], $secret);
-    $firewall = new Firewall((new Config($cache))->combine($portable));
+    $firewall = new Firewall((new Config($cache))->with($portable));
     $loadedVersion = $row['version'];
 }
 ```
@@ -191,7 +191,7 @@ A few capabilities cannot be represented as pure data and are intentionally **ex
 | Excluded | Why |
 |----------|-----|
 | Trusted-bot reverse-DNS safelisting (`TrustedBotMatcher`) | needs live DNS resolution and an optional cache at request time |
-| OWASP Core Rule Set (`blocklists->owasp()`) | a ruleset is parsed `SecRule` objects / rule files, not a small data blob |
+| OWASP Core Rule Set (`CoreRuleSetMatcher`, in `flowd/phirewall-preset-owasp-crs`) | a ruleset is parsed `SecRule` objects / rule files, not a small data blob |
 | File-backed lists (`fileIp`, `filePatternBackend`) | filesystem paths are environment-specific; the in-memory pattern backend is the portable equivalent |
 | Closure-driven dynamic throttle limits/periods, `$config->throttles->multi()` | limits/periods can be arbitrary PHP closures and cannot be serialized (express the multi-window case as several `throttles->add()` entries; `sliding` is supported) |
 | Response factories, `ipResolver`, `discriminatorNormalizer` | these are closures / objects, not declarative data |

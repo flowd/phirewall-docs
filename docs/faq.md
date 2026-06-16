@@ -294,8 +294,12 @@ For comprehensive OWASP CRS coverage, use a dedicated WAF (like ModSecurity) alo
 
 ### How do I load custom OWASP rules?
 
+OWASP CRS support ships in the companion package `flowd/phirewall-preset-owasp-crs` (`composer require flowd/phirewall-preset-owasp-crs`):
+
 ```php
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 
 // From a string of rules
 $crs = SecRuleLoader::fromString($rulesText);
@@ -306,7 +310,7 @@ $crs = SecRuleLoader::fromFile('/path/to/rules.conf');
 // From a directory (all .conf files)
 $crs = SecRuleLoader::fromDirectory('/path/to/rules/');
 
-$config->blocklists->owasp('owasp', $crs);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($crs)));
 ```
 
 ### Can I disable specific OWASP rules?

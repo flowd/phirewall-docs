@@ -4,13 +4,71 @@ outline: deep
 
 # OWASP Core Rule Set
 
-Phirewall includes a built-in OWASP CRS (Core Rule Set) engine that parses and evaluates ModSecurity-compatible `SecRule` directives. This provides web application firewall (WAF) capabilities for detecting SQL injection, XSS, remote code execution, path traversal, and other common attack vectors.
+OWASP CRS support lives in a separate companion package,
+[`flowd/phirewall-preset-owasp-crs`](https://github.com/flowd/phirewall-preset-owasp-crs).
+It provides a ModSecurity-compatible `SecRule` engine - parsing and evaluating
+`SecRule` directives for detecting SQL injection, XSS, remote code execution, path
+traversal, and other common attack vectors - plus ready-made, per-paranoia-level CRS
+presets you can drop into a `Config`.
+
+::: info Extracted in 0.6
+The SecRule engine used to ship inside the core `flowd/phirewall` package under the
+`Flowd\Phirewall\Owasp\` namespace. As of 0.6 it lives in the companion package under
+`Flowd\PhirewallPresetOwaspCrs\Engine\`, and the `$config->blocklists->owasp()`
+shortcut was removed - register a `CoreRuleSetMatcher` as a normal blocklist rule
+instead (shown throughout this page).
+:::
+
+## Installation
+
+```bash
+composer require flowd/phirewall-preset-owasp-crs
+```
 
 ## Quick Start
 
+The fastest way to get CRS protection is the bundled presets, which ship a
+pre-filtered, per-paranoia-level snapshot of the OWASP CRS rules:
+
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
+use Flowd\PhirewallPresetOwaspCrs\Presets;
+use Flowd\Phirewall\Store\InMemoryCache;
+
+$config = new Config(new InMemoryCache());
+
+// Block requests matching any active CRS rule at paranoia level 1.
+$config = $config->with(Presets::blocklist(ParanoiaLevel::Level1));
+```
+
+Prefer to ban repeat offenders rather than block every single match? Use the
+fail2ban preset instead:
+
+```php
+use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
+use Flowd\PhirewallPresetOwaspCrs\Presets;
+
+$config = $config->with(
+    Presets::fail2ban(ParanoiaLevel::Level1, threshold: 5, period: 600, ban: 3600),
+);
+```
+
+See the [package README](https://github.com/flowd/phirewall-preset-owasp-crs) for the
+preset API, paranoia-level guidance, and how the bundled rules are imported and kept
+up to date.
+
+## Writing Your Own Rules
+
+You are not limited to the bundled CRS snapshot - the SecRule engine can parse and
+evaluate any ModSecurity-style ruleset you provide. Load rules and register them as a
+blocklist rule via a `CoreRuleSetMatcher`:
+
+```php
+use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\InMemoryCache;
 
 $config = new Config(new InMemoryCache());
@@ -20,7 +78,7 @@ SecRule ARGS "@rx (?i)\bunion\b.*\bselect\b" "id:942100,phase:2,deny,msg:'SQL In
 SecRule ARGS "@rx (?i)<script[^>]*>" "id:941100,phase:2,deny,msg:'XSS'"
 CRS);
 
-$config->blocklists->owasp('owasp', $rules);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
 ```
 
 ## Loading Rules
@@ -30,7 +88,7 @@ $config->blocklists->owasp('owasp', $rules);
 Inline rules for simple configurations:
 
 ```php
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 
 $rules = SecRuleLoader::fromString(<<<'CRS'
 SecRule ARGS "@rx (?i)\bunion\b.*\bselect\b" "id:942100,phase:2,deny,msg:'SQL Injection'"
@@ -87,27 +145,11 @@ $skipped = $report['skipped']; // int - Lines that were skipped
 
 | Method | Parameters | Description |
 |--------|-----------|-------------|
-| `fromString()` | `string $rulesText, ?string $contextFolder = null, ?int $maxValuesPerCrsVariable = null` | Parse rules from a string |
-| `fromFile()` | `string $filePath, ?int $maxValuesPerCrsVariable = null` | Load rules from a single file |
-| `fromFiles()` | `list<string> $paths, ?int $maxValuesPerCrsVariable = null` | Load and merge multiple files |
-| `fromDirectory()` | `string $dir, ?callable $filter = null, ?int $maxValuesPerCrsVariable = null` | Load all files in a directory |
-| `fromStringWithReport()` | `string $rulesText, ?int $maxValuesPerCrsVariable = null` | Parse with statistics |
-
-## Per-Variable Value Cap (CPU-DoS Guard)
-
-Every `SecRuleLoader` factory accepts an optional trailing `?int $maxValuesPerCrsVariable`. It bounds how many collected values a single CRS variable (such as `ARGS`) may contribute to evaluation, so an attacker cannot drive up per-request WAF cost by submitting thousands of parameters, headers, or cookies. The cap is **per variable**, not aggregate.
-
-```php
-use Flowd\Phirewall\Owasp\SecRuleLoader;
-
-// Cap each CRS variable at 5000 collected values.
-$rules = SecRuleLoader::fromFile('/etc/phirewall/owasp.conf', maxValuesPerCrsVariable: 5000);
-$rules = SecRuleLoader::fromString($rulesText, maxValuesPerCrsVariable: 5000);
-```
-
-- **Default (`null`):** twice PHP's `max_input_vars`, falling back to `2000` (`RequestVariableValues::DEFAULT_MAX_VALUES_PER_CRS_VARIABLE`) when `max_input_vars` is unset or non-positive. Doubling `max_input_vars` sizes the budget to the parameter count the runtime actually accepts (variables such as `ARGS` emit both a name and a value per parameter), so a request PHP can fully parse is never falsely truncated.
-- **Fail-closed:** when a variable's values are truncated at the cap, the affected deny rules fail **closed** (the request is blocked) rather than evaluating a partial value set. An attacker therefore cannot pad a payload past the cap to slip past a deny rule.
-- **Explicit non-positive value throws:** passing an explicit cap below `1` raises `\InvalidArgumentException`, because a non-positive cap would fail every deny rule closed and block all traffic.
+| `fromString()` | `string $rulesText, ?string $contextFolder` | Parse rules from a string |
+| `fromFile()` | `string $filePath` | Load rules from a single file |
+| `fromFiles()` | `list<string> $paths` | Load and merge multiple files |
+| `fromDirectory()` | `string $dir, ?callable $filter` | Load all files in a directory |
+| `fromStringWithReport()` | `string $rulesText` | Parse with statistics |
 
 ## Supported SecRule Syntax
 
@@ -122,7 +164,7 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `REQUEST_URI` | Full request URI including query string |
 | `REQUEST_METHOD` | HTTP method (GET, POST, etc.) |
 | `QUERY_STRING` | Raw query string |
-| `REQUEST_FILENAME` | Basename (final path segment), without query string |
+| `REQUEST_FILENAME` | Request path without query string |
 | `REQUEST_HEADERS` | All request header values |
 | `REQUEST_HEADERS_NAMES` | Names of all request headers |
 | `REQUEST_COOKIES` | All cookie values |
@@ -138,7 +180,7 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `@startswith` | `@startswith text` | Case-insensitive prefix match |
 | `@beginswith` | `@beginswith text` | Alias for `@startswith` |
 | `@endswith` | `@endswith text` | Case-insensitive suffix match |
-| `@pm` | `@pm word1 word2` | Phrase match (case-insensitive, any of the listed words) |
+| `@pm` | `@pm word1 word2` | Phrase match (case-insensitive substring match against any of the listed phrases) |
 | `@pmFromFile` | `@pmFromFile file.txt` | Phrase match from a file (one phrase per line) |
 
 ### Actions
@@ -148,7 +190,7 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `id:N` | Rule ID (required, must be unique) |
 | `phase:N` | Processing phase (currently informational) |
 | `deny` | Block the request (required for the rule to trigger blocking) |
-| `block` | Alias for `deny`, both trigger blocking |
+| `block` | Alias for `deny` -- both trigger blocking |
 | `msg:'text'` | Human-readable description for logging |
 
 ### Line Continuation
@@ -181,7 +223,7 @@ $rules = SecRuleLoader::fromString(/* ... */);
 // Disable a specific rule by ID
 $rules->disable(941110); // XSS Event Handler (too aggressive for some apps)
 
-$config->blocklists->owasp('owasp', $rules);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
 ```
 
 ### Re-enabling Rules
@@ -283,7 +325,9 @@ A comprehensive rule set for production:
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
 
@@ -321,7 +365,7 @@ CRS);
 // Disable rules that cause false positives in your application
 // $rules->disable(941110); // XSS Event Handler
 
-$config->blocklists->owasp('owasp', $rules);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
 ```
 
 ## File-Based Rule Management
@@ -358,7 +402,7 @@ insert into
 ```
 
 ::: warning
-`@pmFromFile` paths are resolved relative to the rule file's directory, and `..` traversal segments are rejected. Treat SecRule files as trusted operator configuration; never build rule text from untrusted input, since the operand selects which file is read.
+`@pmFromFile` includes path traversal protection. Paths containing `..` are rejected to prevent loading files outside the rules directory.
 :::
 
 ## Architecture
@@ -389,7 +433,7 @@ Each CRS variable maps to a `VariableCollectorInterface` implementation:
 | `REQUEST_URI` | `RequestUriCollector` | Full URI including query string |
 | `REQUEST_METHOD` | `RequestMethodCollector` | HTTP method |
 | `QUERY_STRING` | `QueryStringCollector` | Raw query string |
-| `REQUEST_FILENAME` | `RequestFilenameCollector` | Basename (final path segment), without query string |
+| `REQUEST_FILENAME` | `RequestFilenameCollector` | URI path without query string |
 | `REQUEST_HEADERS` | `RequestHeadersCollector` | All header values |
 | `REQUEST_HEADERS_NAMES` | `RequestHeadersNamesCollector` | Header names |
 | `REQUEST_COOKIES` | `RequestCookiesCollector` | All cookie values |
@@ -412,7 +456,7 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 Unsupported operators resolve to `UnsupportedOperatorEvaluator`, which never matches (safe no-op).
 
 ::: warning ReDoS protection: 8 KiB length guard on `@rx`
-`RegexEvaluator` skips any value whose byte length exceeds 8,192 bytes; the value is treated as non-matching. This is an intentional trade-off: running PCRE on unbounded attacker-controlled input risks catastrophic backtracking that can freeze the PHP process (ReDoS). Skipping overlength values mirrors the behavior of standard WAFs such as ModSecurity's `SecRequestBodyLimit`.
+`RegexEvaluator` skips any value whose byte length exceeds 8,192 bytes — the value is treated as non-matching. This is an intentional trade-off: running PCRE on unbounded attacker-controlled input risks catastrophic backtracking that can freeze the PHP process (ReDoS). Skipping overlength values mirrors the behavior of standard WAFs such as ModSecurity's `SecRequestBodyLimit`.
 
 In practice, legitimate request values (query parameters, header values, cookie values) are rarely larger than a few kilobytes. If you are matching multi-megabyte request bodies via `@rx`, consider pre-processing them before passing to the firewall.
 :::
@@ -422,7 +466,7 @@ In practice, legitimate request values (query parameters, header values, cookie 
 Implement `OperatorEvaluatorInterface` and register it in `OperatorEvaluatorFactory`:
 
 ```php
-namespace Flowd\Phirewall\Owasp\Operator;
+namespace Flowd\PhirewallPresetOwaspCrs\Engine\Operator;
 
 final readonly class IpMatchEvaluator implements OperatorEvaluatorInterface
 {
@@ -453,7 +497,7 @@ final readonly class IpMatchEvaluator implements OperatorEvaluatorInterface
 Implement `VariableCollectorInterface` and register it in `VariableCollectorFactory`:
 
 ```php
-namespace Flowd\Phirewall\Owasp\Variable;
+namespace Flowd\PhirewallPresetOwaspCrs\Engine\Variable;
 
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -497,10 +541,11 @@ Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is s
 3. **Combine with fail2ban.** Use OWASP rules to detect attacks and fail2ban to ban repeat offenders:
 
     ```php
-    $config->blocklists->owasp('owasp', $rules);
+    $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
     $config->fail2ban->add('persistent-attacker',
         threshold: 5, period: 60, ban: 86400,
         filter: fn($req) => true,
+        key: KeyExtractors::ip()
     );
     ```
 

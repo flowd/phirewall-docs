@@ -4,7 +4,7 @@ outline: deep
 
 # Bot Detection
 
-Phirewall provides three specialized matchers for bot and scanner detection: **Known Scanner Blocking**, **Suspicious Headers Detection**, and **Trusted Bot Verification**. Each is available as a one-liner convenience method on the blocklist or safelist section.
+Phirewall provides three specialized matchers for bot and scanner detection: **Known Scanner Blocking**, **Suspicious Headers Detection**, and **Trusted Bot Verification**. Known scanners and suspicious headers are available as one-liner convenience methods on the blocklist section; trusted bot verification is wired by adding a `SafelistRule` with a `TrustedBotMatcher` to the safelist.
 
 ## Known Scanner Blocking
 
@@ -156,31 +156,41 @@ Some legitimate clients may not send all standard headers: API clients, embedded
 
 ## Trusted Bot Verification (rDNS)
 
-The `trustedBots()` method safelists verified search engine bots using **reverse DNS (rDNS) verification**. This prevents fake bots: anyone can send `Googlebot` as a User-Agent, but only Google's real crawlers have IPs that resolve to `*.googlebot.com`.
+Wiring a `TrustedBotMatcher` on the safelist safelists verified search engine bots using **reverse DNS (rDNS) verification**. This prevents fake bots: anyone can send `Googlebot` as a User-Agent, but only Google's real crawlers have IPs that resolve to `*.googlebot.com`.
+
+For rate-limiting verified bots instead of fully safelisting them, see the dedicated [Trusted Bots](/features/trusted-bots) page.
 
 ### Quick Setup
 
 ```php
+use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
+
 // Safelist verified search engine bots
-$config->safelists->trustedBots(cache: $cache);
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
+    ipResolver: $config->getIpResolver(),
+    cache: $cache,
+)));
 ```
+
+Pass `ipResolver: $config->getIpResolver()` so verification uses the correct client IP behind a proxy. Omit it only if you deliberately want to verify against `REMOTE_ADDR`.
 
 ### Configuration
 
+The matcher accepts these constructor arguments:
+
 ```php
-$config->safelists->trustedBots(
-    string $name = 'trusted-bots',
+new TrustedBotMatcher(
     array $additionalBots = [],
     ?callable $ipResolver = null,
     ?CacheInterface $cache = null
-): SafelistSection
+)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `$name` | `string` | Unique rule identifier (default: `'trusted-bots'`) |
 | `$additionalBots` | `list<array{ua: string, hostname: string}>` | Extra bots to recognize |
-| `$ipResolver` | `callable\|null` | Custom IP resolver. Defaults to config's global IP resolver. |
+| `$ipResolver` | `callable\|null` | IP resolver. Pass `$config->getIpResolver()` to use the config's global resolver (correct client IP behind a proxy). |
 | `$cache` | `CacheInterface\|null` | PSR-16 cache for DNS results (highly recommended) |
 
 ### Verification Flow
@@ -226,10 +236,10 @@ Both IPv4 and IPv6 are supported. Forward confirmation uses both `gethostbynamel
 Add your organization's internal crawlers:
 
 ```php
-$config->safelists->trustedBots('custom-bots', [
+$config->safelists->addRule(new SafelistRule('custom-bots', new TrustedBotMatcher([
     ['ua' => 'mycompany-crawler', 'hostname' => '.crawler.mycompany.com'],
     ['ua' => 'internal-monitor', 'hostname' => '.monitoring.mycompany.com'],
-], cache: $cache);
+], ipResolver: $config->getIpResolver(), cache: $cache)));
 ```
 
 ::: danger
@@ -241,7 +251,10 @@ The hostname suffix **must** start with a dot (e.g., `.googlebot.com`, not `goog
 DNS lookups are blocking I/O operations. **Always provide a PSR-16 cache in production** to avoid latency:
 
 ```php
-$config->safelists->trustedBots(cache: $cache);
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
+    ipResolver: $config->getIpResolver(),
+    cache: $cache,
+)));
 ```
 
 | Cache Behavior | TTL |
@@ -296,10 +309,15 @@ For more comprehensive attack pattern detection beyond path matching, consider u
 Use all three matchers together for comprehensive bot management:
 
 ```php
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 
 // 1. Safelist verified search engine bots (they bypass all other rules)
-$config->safelists->trustedBots(cache: $cache);
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
+    ipResolver: $config->getIpResolver(),
+    cache: $cache,
+)));
 
 // 2. Block known attack tools
 $config->blocklists->knownScanners();
@@ -344,7 +362,7 @@ This layered approach ensures:
 Request
    |
    v
-Safelists (trustedBots) --> match? --> ALLOW immediately
+Safelists (verified bots) --> match? --> ALLOW immediately
    |
    No match
    |
@@ -376,11 +394,11 @@ ALLOW (pass to handler)
 
 1. **Layer your defenses.** Use multiple strategies together: User-Agent blocking, path blocking, header analysis, and Fail2Ban for persistence.
 
-2. **Verify before you safelist.** Never safelist bots based solely on their User-Agent. Always verify with rDNS using `trustedBots()` for search engine bots.
+2. **Verify before you safelist.** Never safelist bots based solely on their User-Agent. Always verify with rDNS by wiring `TrustedBotMatcher` on the safelist for search engine bots.
 
-3. **Always cache DNS lookups.** Pass a PSR-16 cache to `trustedBots()` to avoid blocking DNS calls on every request.
+3. **Always cache DNS lookups.** Pass a PSR-16 cache to `TrustedBotMatcher` to avoid blocking DNS calls on every request.
 
-4. **Safelist before blocklist.** Place `trustedBots()` on the safelist so verified search engine bots pass through before `knownScanners()` or `suspiciousHeaders()` can block them.
+4. **Safelist before blocklist.** Place the `TrustedBotMatcher` safelist rule first so verified search engine bots pass through before `knownScanners()` or `suspiciousHeaders()` can block them.
 
 5. **Don't rely on User-Agent alone.** Sophisticated attackers rotate User-Agents to look like browsers. Combine UA-based detection with header analysis, rate limiting, and [Fail2Ban](/features/fail2ban) for defense in depth.
 
