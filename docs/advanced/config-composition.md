@@ -4,7 +4,7 @@ outline: deep
 
 # Config Composition
 
-Real deployments rarely have a single source of firewall rules. A vendor ships a baseline, an environment (staging vs. production) adds its own rules, a tenant overrides a few, and a single deployment applies a last-minute tweak. `Config::compose()` (and the fluent `Config::mergedWith()`) merges these layers into one effective `Config` (**without mutating any input**) so each layer can be owned, versioned, and shipped independently, often as a [`PortableConfig`](/advanced/portable-config).
+Real deployments rarely have a single source of firewall rules. A vendor ships a baseline, an environment (staging vs. production) adds its own rules, a tenant overrides a few, and a single deployment applies a last-minute tweak. `Config::with()` applies these layers into one effective `Config` (**without mutating any input**) so each layer can be owned, versioned, and shipped independently. A layer is any `ConfigLayer` - a live `Config` or a [`PortableConfig`](/advanced/portable-config).
 
 ## Usage
 
@@ -12,26 +12,20 @@ Real deployments rarely have a single source of firewall rules. A vendor ships a
 use Flowd\Phirewall\Config;
 
 // Each layer is owned and versioned independently, usually as a PortableConfig.
-// Materialize them onto your cache with Config::combine(); later layers win.
+// Apply them onto your cache with Config::with(); later layers win.
 // The cache lives only on Config; the portable layers never carry one.
-$effective = (new Config($cache))->combine(
+$effective = (new Config($cache))->with(
     $vendorPortable,        // shared product defaults
     $environmentPortable,   // staging vs. production
     $tenantPortable,        // per-customer policy
 );
 
-// Already holding Config instances? compose() / mergedWith() layer those directly
+// A Config is itself a ConfigLayer, so configs apply directly through the same call
 // (same precedence; later layers win):
-$effective = $vendorConfig->mergedWith($environmentConfig, $tenantConfig);
-$effective = Config::compose($vendorConfig, $environmentConfig, $tenantConfig);
+$effective = $base->with($vendorConfig, $environmentConfig, $tenantConfig);
 ```
 
-`compose()` is static and reads as "base first, overlays after"; `mergedWith()` is the instance form for when you already hold the base. Both return a fresh `Config`; the base and every overlay are left untouched.
-
-| Form | Signature | Reads as |
-|------|-----------|----------|
-| `Config::compose(...$configs)` | static, variadic | base first, overlays after |
-| `$base->mergedWith(...$overlays)` | instance, variadic | overlays applied onto `$base` |
+`with()` is the one instance method for composition: it takes variadic `ConfigLayer`s and returns a fresh `Config`; the base and every overlay are left untouched.
 
 ## Merge semantics
 
@@ -53,13 +47,13 @@ A `Config` does not track which options were *set* versus *left at their default
 
 Because "default-valued" is read as "no opinion", an overlay **cannot turn a toggle back off** once an earlier layer turned it on. If the vendor baseline calls `enableResponseHeaders()` (changing the toggle from its `false` default to `true`), a tenant overlay that leaves the toggle at `false` will *not* switch it back off; its `false` is indistinguishable from "unspecified", so the baseline's explicit `true` wins. The same applies to `failOpen` and the other boolean toggles. (`enabled` is the deliberate exception: as its row above notes, it uses last-layer-wins, so a later layer *can* re-assert it.)
 
-If you need a later layer to *force* a non-default option back to the default, do not rely on composition: build the final `Config` and set the option explicitly after composing, e.g. `Config::compose(...)->setFailOpen(true)`.
+If you need a later layer to *force* a non-default option back to the default, do not rely on composition: build the final `Config` and set the option explicitly after composing, e.g. `(new Config($cache))->with(...)->setFailOpen(true)`.
 
-### Limitation: composing the IP resolver does not rewrite IP-aware matchers
+### IP resolver: autowired matchers compose, an explicit resolver is fixed
 
-IP-aware matchers (`IpMatcher`, the file/snapshot IP blocklists, `TrustedBotMatcher`) capture their IP resolver **when the rule is constructed**. Because composition copies already-built rule objects, composing a layer with a different IP resolver only affects rules added *after* it; it does **not** retroactively change how earlier layers' IP rules resolve the client IP. Set the resolver on each source `Config` (via `setIpResolver()`) **before** adding its IP rules, rather than expecting a later layer to override it.
+IP-aware matchers (`IpMatcher`, the file/snapshot IP blocklists, `TrustedBotMatcher`) **autowire** the client-IP resolver. Constructed without an explicit resolver, they resolve the client IP through the `Config` they run under, at request time. So a composed `Config` applies its own merged IP resolver to these matchers no matter which layer defined them, the same way keyless counter rules (throttle, fail2ban, allow2ban, track) resolve their default IP key against the `Config` they run under.
 
-This limitation does **not** apply to counter rules (throttle, fail2ban, allow2ban, track) added **without** an explicit `key`. Their default IP key is resolved per request against the `Config` they run under, so a composed `Config` correctly applies its own merged IP resolver to such rules no matter which layer defined them.
+The exception is a matcher **given an explicit resolver in its constructor**: it keeps that resolver and ignores the composed `Config`'s. Composition copies already-built rule objects, so it cannot rewrite a resolver baked into a matcher. If you want every layer's IP rules to follow one resolver, leave the matchers' resolver unset and set it once on the final `Config` with `setIpResolver()`; reserve an explicit per-matcher resolver for the rare rule that must resolve the client IP differently from the rest.
 
 ## Example
 
@@ -67,7 +61,7 @@ This limitation does **not** apply to counter rules (throttle, fail2ban, allow2b
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Http\Firewall;
 
-$effective = $vendorBaseline->mergedWith($environmentOverlay, $tenantOverlay, $deploymentTweak);
+$effective = $vendorBaseline->with($environmentOverlay, $tenantOverlay, $deploymentTweak);
 
 // Rules unioned by name, base ordering preserved:
 $effective->blocklists->rules();   // ['scanners' (tenant wins), 'bad-net', 'admin-probe', ...]

@@ -57,6 +57,11 @@ php examples/01-basic-setup.php
 
 Production-ready integration examples for popular PHP frameworks. Each example includes storage, safelists, blocklists, rate limiting, brute-force protection, OWASP rules, and observability. Copy, paste, adapt.
 
+::: tip OWASP CRS is a separate package
+The OWASP rules in these examples use the companion package. Install it first:
+`composer require flowd/phirewall-preset-owasp-crs`. See [OWASP CRS](/features/owasp-crs) for the full preset and engine API.
+:::
+
 ### PSR-15 (Generic / Plain PHP)
 
 Works with any PSR-15 compatible stack (custom dispatchers, runtimes, etc.; Mezzio has its own section below). Requires `nyholm/psr7`.
@@ -69,10 +74,14 @@ declare(strict_types=1);
 require __DIR__ . '/vendor/autoload.php';
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\ApcuCache;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Nyholm\Psr7\Response;
@@ -110,7 +119,7 @@ $config->safelists->add('metrics',
         $req->getUri()->getPath() === '/metrics'
 );
 $config->safelists->ip('office', ['10.0.0.0/8', '192.168.1.0/24']);
-$config->safelists->trustedBots(cache: $cache);
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
 
 // ── Blocklists ───────────────────────────────────────────────────────
 $config->blocklists->knownScanners();
@@ -126,7 +135,7 @@ SecRule ARGS "@rx (?i)\bunion\b.*\bselect\b" "id:942100,phase:2,deny,msg:'SQLi'"
 SecRule ARGS "@rx (?i)<script[^>]*>" "id:941100,phase:2,deny,msg:'XSS'"
 SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" "id:933100,phase:2,deny,msg:'RCE'"
 CRS);
-$config->blocklists->owasp('owasp', $owaspRules);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
 // ── Fail2Ban ─────────────────────────────────────────────────────────
 $config->fail2ban->add('login-abuse',
@@ -203,10 +212,14 @@ declare(strict_types=1);
 namespace App\Factory;
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\ApcuCache;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Message\ServerRequestInterface;
@@ -251,7 +264,7 @@ class PhirewallFactory
             fn(ServerRequestInterface $req): bool =>
                 str_starts_with($req->getUri()->getPath(), '/_profiler')
         );
-        $config->safelists->trustedBots(cache: $cache);
+        $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
 
         // ── Blocklists ───────────────────────────────────────────
         $config->blocklists->knownScanners();
@@ -263,7 +276,7 @@ class PhirewallFactory
         SecRule ARGS "@rx (?i)<script[^>]*>" "id:941100,phase:2,deny,msg:'XSS'"
         SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" "id:933100,phase:2,deny,msg:'RCE'"
         CRS);
-        $config->blocklists->owasp('owasp', $owaspRules);
+        $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
         // ── Fail2Ban ─────────────────────────────────────────────
         // No key: these rules default to the client IP from the
@@ -428,10 +441,14 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\ApcuCache;
 use Illuminate\Support\ServiceProvider;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -485,7 +502,7 @@ class PhirewallServiceProvider extends ServiceProvider
                 fn(ServerRequestInterface $req): bool =>
                     str_starts_with($req->getUri()->getPath(), '/horizon')
             );
-            $config->safelists->trustedBots(cache: $cache);
+            $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
 
             // ── Blocklists ───────────────────────────────────────
             $config->blocklists->knownScanners();
@@ -501,7 +518,7 @@ class PhirewallServiceProvider extends ServiceProvider
             SecRule ARGS "@rx (?i)<script[^>]*>" "id:941100,phase:2,deny,msg:'XSS'"
             SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" "id:933100,phase:2,deny,msg:'RCE'"
             CRS);
-            $config->blocklists->owasp('owasp', $owaspRules);
+            $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
             // ── Fail2Ban ─────────────────────────────────────────
             // No key: these rules default to the client IP from the
@@ -661,10 +678,14 @@ declare(strict_types=1);
 require __DIR__ . '/vendor/autoload.php';
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\ApcuCache;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -690,7 +711,7 @@ $config->safelists->add('health',
     fn(ServerRequestInterface $req): bool =>
         $req->getUri()->getPath() === '/health'
 );
-$config->safelists->trustedBots(cache: $cache);
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
 
 // ── Blocklists ───────────────────────────────────────────────────────
 $config->blocklists->knownScanners();
@@ -702,7 +723,7 @@ SecRule ARGS "@rx (?i)\bunion\b.*\bselect\b" "id:942100,phase:2,deny,msg:'SQLi'"
 SecRule ARGS "@rx (?i)<script[^>]*>" "id:941100,phase:2,deny,msg:'XSS'"
 SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" "id:933100,phase:2,deny,msg:'RCE'"
 CRS);
-$config->blocklists->owasp('owasp', $owaspRules);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
 // ── Fail2Ban ─────────────────────────────────────────────────────────
 $config->fail2ban->add('login-abuse',
@@ -764,10 +785,14 @@ declare(strict_types=1);
 namespace App\Factory;
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\ApcuCache;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Container\ContainerInterface;
@@ -802,7 +827,7 @@ class PhirewallMiddlewareFactory
             fn(ServerRequestInterface $req): bool =>
                 $req->getUri()->getPath() === '/health'
         );
-        $config->safelists->trustedBots(cache: $cache);
+        $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
 
         // ── Blocklists ───────────────────────────────────────────
         $config->blocklists->knownScanners();
@@ -814,7 +839,7 @@ class PhirewallMiddlewareFactory
         SecRule ARGS "@rx (?i)<script[^>]*>" "id:941100,phase:2,deny,msg:'XSS'"
         SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" "id:933100,phase:2,deny,msg:'RCE'"
         CRS);
-        $config->blocklists->owasp('owasp', $owaspRules);
+        $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
         // ── Fail2Ban ─────────────────────────────────────────────
         // No key: these rules default to the client IP from the
@@ -1237,6 +1262,8 @@ Safelist verified search engine bots using reverse DNS (RDNS) verification. Only
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Store\InMemoryCache;
 
 $cache = new InMemoryCache();
@@ -1244,12 +1271,12 @@ $config = new Config($cache);
 
 // Safelist known bots (Googlebot, Bingbot, Baidu, etc.) via RDNS
 // Pass a PSR-16 cache to avoid repeated DNS lookups
-$config->safelists->trustedBots(cache: $cache);
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
 
 // Safelist a custom internal bot
-$config->safelists->trustedBots('custom-bots', [
+$config->safelists->addRule(new SafelistRule('custom-bots', new TrustedBotMatcher([
     ['ua' => 'mycompany-crawler', 'hostname' => '.crawler.mycompany.com'],
-], cache: $cache);
+], ipResolver: $config->getIpResolver(), cache: $cache)));
 ```
 
 See [Bot Detection](/features/bot-detection) for details.
@@ -1413,10 +1440,14 @@ A production-ready configuration combining safelists, blocklists, OWASP rules, b
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Pattern\PatternEntry;
 use Flowd\Phirewall\Pattern\PatternKind;
 use Flowd\Phirewall\Store\RedisCache;
@@ -1452,7 +1483,7 @@ $config->safelists->add('health',
 $config->safelists->add('metrics',
     fn($req) => $req->getUri()->getPath() === '/metrics'
 );
-$config->safelists->trustedBots(cache: $cache);
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
 
 // === BLOCKLISTS ===
 
@@ -1486,7 +1517,7 @@ SecRule ARGS "@rx (?i)<script[^>]*>" "id:941100,phase:2,deny,msg:'XSS'"
 SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" "id:933100,phase:2,deny,msg:'RCE'"
 SecRule REQUEST_URI "@rx \.\.\/" "id:930100,phase:2,deny,msg:'Path Traversal'"
 CRS);
-$config->blocklists->owasp('owasp', $owaspRules);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
 // === FAIL2BAN ===
 $config->fail2ban->add('login-abuse',
@@ -1572,11 +1603,13 @@ $middleware = new Middleware($config);
 
 ## Production: OWASP Protection Suite
 
-SQL injection (SQLi), XSS (Cross-Site Scripting), PHP injection, and path traversal detection:
+SQL injection (SQLi), XSS (Cross-Site Scripting), PHP injection, and path traversal detection. Requires the companion package: `composer require flowd/phirewall-preset-owasp-crs`.
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
 
@@ -1611,7 +1644,7 @@ SecRule REQUEST_URI "@rx (?i)(%2e%2e%2f|%2e%2e/)" \
     "id:930110,phase:2,deny,msg:'Encoded Path Traversal'"
 CRS);
 
-$config->blocklists->owasp('owasp-suite', $rules);
+$config->blocklists->addRule(new BlocklistRule('owasp-suite', new CoreRuleSetMatcher($rules)));
 
 // Optionally disable specific rules that cause false positives
 // $rules->disable(941110); // XSS Event Handler might be too aggressive

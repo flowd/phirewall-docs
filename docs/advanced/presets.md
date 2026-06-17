@@ -4,9 +4,9 @@ outline: deep
 
 # Presets
 
-Presets are ready-to-use rule bundles for recurring scenarios, so you don't have to hand-write the same rules each time. Each preset is a [`PortableConfig`](/advanced/portable-config) returned by an accessor (e.g. `Presets::scannerBlocking()`): plain, inspectable, serializable data you can diff, sign, or layer.
+Presets are ready-to-use rule bundles for recurring scenarios, so you don't have to hand-write the same rules each time. Each preset is a [`PortableConfig`](/advanced/portable-config) returned by an accessor (e.g. `Presets::scannerBlocking()`): plain, inspectable, serializable data you can diff, sign, or layer. Every preset is a `ConfigLayer`, so it composes through the same `Config::with()` call as any other layer.
 
-Materialize one or several onto your own cache with [`Config::combine()`](/advanced/config-composition); presets are pure data and never receive a cache. Every rule is namespaced `preset.<area>.*`, so a later layer that redefines it by name overrides predictably.
+Apply one or several onto your own cache with [`Config::with()`](/advanced/config-composition); presets are pure data and never receive a cache. Every rule is namespaced `preset.<area>.*`, so a later layer that redefines it by name overrides predictably.
 
 ## Usage
 
@@ -14,21 +14,21 @@ Materialize one or several onto your own cache with [`Config::combine()`](/advan
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Preset\Presets;
 
-// A preset on its own; combine it onto a Config you build with your cache:
-$config = (new Config($cache))->combine(Presets::scannerBlocking());
+// A preset on its own; apply it onto a Config you build with your cache:
+$config = (new Config($cache))->with(Presets::scannerBlocking());
 
 // Inspect / serialize the underlying portable schema:
 $schema = Presets::scannerBlocking()->toArray();
 
 // Stack several presets, then your own rules last (later layers win by name):
-$config = (new Config($cache))->combine(
+$config = (new Config($cache))->with(
     Presets::scannerBlocking(),
     Presets::sensitivePathBlocking(),
     $myPortable,
 );
 ```
 
-Preset rules emit the same [observability events](/advanced/observability) as hand-written ones; wire your PSR-14 dispatcher into the `Config` you combine onto (`new Config($cache, $dispatcher)`).
+Preset rules emit the same [observability events](/advanced/observability) as hand-written ones; wire your PSR-14 dispatcher into the `Config` you apply onto (`new Config($cache, $dispatcher)`).
 
 ## Shipped presets
 
@@ -42,7 +42,7 @@ Resolve any preset by name with `Presets::get($name)` (a `PortableConfig`), pass
 ## Conventions and overrides
 
 - The shipped presets target signals that are universal across applications (scanner User-Agents, missing browser headers, well-known sensitive paths), so they assume nothing about your routing. A preset you build yourself is just a `PortableConfig`, so it can key on whatever fits your environment, including routes your own apps standardize.
-- Override any rule by combining the preset with your own portable rules that redefine the rule by the same name (later layer wins), or by rebuilding the preset's schema.
+- Override any rule by applying the preset with your own portable rules that redefine the rule by the same name (later layer wins), or by rebuilding the preset's schema.
 
 > **Note:** `scannerBlocking()`'s `suspicious-headers` rule is the more aggressive of the two: some legitimate API clients, privacy tools, and embedded browsers also omit `Accept-*` headers. Drop or override it by name if your traffic includes non-browser clients.
 

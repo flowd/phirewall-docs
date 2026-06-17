@@ -115,7 +115,7 @@ $config->safelists->ip('office', ['10.0.0.0/8', '192.168.1.0/24']);
 
 // Safelist verified search engine bots (Googlebot, Bingbot, etc.).
 // Verified via reverse DNS; pass a cache to skip repeat lookups (see Bot Detection).
-$config->safelists->trustedBots();
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher()));
 ```
 
 ### Blocklists (Deny Malicious Traffic)
@@ -302,7 +302,9 @@ echo $response->getBody();
 namespace App\Factory;
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\ApcuCache;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -327,7 +329,7 @@ class PhirewallFactory
             fn(ServerRequestInterface $req): bool =>
                 str_starts_with($req->getUri()->getPath(), '/_profiler')
         );
-        $config->safelists->trustedBots(cache: $cache);
+        $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
         // Blocklists
         $config->blocklists->knownScanners();
@@ -453,7 +455,9 @@ final class PhirewallListener
 namespace App\Providers;
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Store\ApcuCache;
 use Illuminate\Support\ServiceProvider;
@@ -487,7 +491,7 @@ class PhirewallServiceProvider extends ServiceProvider
                 fn(ServerRequestInterface $req): bool =>
                     $req->getUri()->getPath() === '/health'
             );
-            $config->safelists->trustedBots(cache: $cache);
+            $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
             // Blocklists
             $config->blocklists->knownScanners();
@@ -594,7 +598,9 @@ final readonly class Phirewall
 // Add Phirewall LAST so it executes FIRST (outermost).
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Store\ApcuCache;
 use Psr\Http\Message\ServerRequestInterface;
@@ -613,7 +619,7 @@ $config->safelists->add('health',
     fn(ServerRequestInterface $req): bool =>
         $req->getUri()->getPath() === '/health'
 );
-$config->safelists->trustedBots(cache: $cache);
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
 // Blocklists
 $config->blocklists->knownScanners();
@@ -660,7 +666,9 @@ $app->run();
 namespace App\Factory;
 
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Store\ApcuCache;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -683,7 +691,7 @@ class PhirewallMiddlewareFactory
             fn(ServerRequestInterface $req): bool =>
                 $req->getUri()->getPath() === '/health'
         );
-        $config->safelists->trustedBots(cache: $cache);
+        $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
         // Blocklists
         $config->blocklists->knownScanners();

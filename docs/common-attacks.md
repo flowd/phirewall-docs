@@ -83,8 +83,15 @@ $config->throttles->add('account-throttle',
 
 Block common SQL injection patterns using OWASP CRS rules.
 
+::: tip OWASP CRS is a separate package
+The SecRule engine and CRS presets ship in the companion package. Install it first:
+`composer require flowd/phirewall-preset-owasp-crs`. See [OWASP CRS](/features/owasp-crs) for details.
+:::
+
 ```php
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 
 $rules = SecRuleLoader::fromString(<<<'CRS'
 # UNION SELECT attacks
@@ -120,7 +127,7 @@ SecRule ARGS "@rx (?i)information_schema" \
     "id:942170,phase:2,deny,msg:'SQL Injection: DB enumeration'"
 CRS);
 
-$config->blocklists->owasp('sqli', $rules);
+$config->blocklists->addRule(new BlocklistRule('sqli', new CoreRuleSetMatcher($rules)));
 ```
 
 ::: tip
@@ -158,7 +165,7 @@ SecRule ARGS "@rx (?i)<(object|embed|applet)[^>]*>" \
     "id:941150,phase:2,deny,msg:'XSS: Object/embed tag'"
 CRS);
 
-$config->blocklists->owasp('xss', $rules);
+$config->blocklists->addRule(new BlocklistRule('xss', new CoreRuleSetMatcher($rules)));
 ```
 
 ## Remote Code Execution (RCE)
@@ -180,7 +187,7 @@ SecRule ARGS "@rx `[^`]+`" \
     "id:933120,phase:2,deny,msg:'RCE: Backtick execution'"
 CRS);
 
-$config->blocklists->owasp('rce', $rules);
+$config->blocklists->addRule(new BlocklistRule('rce', new CoreRuleSetMatcher($rules)));
 ```
 
 ## Path Traversal
@@ -202,7 +209,7 @@ SecRule ARGS "@rx \.\.[\\/]" \
     "id:930120,phase:2,deny,msg:'Path Traversal in parameter'"
 CRS);
 
-$config->blocklists->owasp('path-traversal', $rules);
+$config->blocklists->addRule(new BlocklistRule('path-traversal', new CoreRuleSetMatcher($rules)));
 ```
 
 Or use a simple blocklist closure:
@@ -407,10 +414,14 @@ Combine all layers into a production-ready configuration:
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\KeyExtractors;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
-use Flowd\Phirewall\Owasp\SecRuleLoader;
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\RedisCache;
 use Psr\Http\Message\ServerRequestInterface;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -427,7 +438,7 @@ $config->setIpResolver(KeyExtractors::clientIp($proxy));
 $config->safelists->add('health',
     fn($req): bool => $req->getUri()->getPath() === '/health'
 );
-$config->safelists->trustedBots(cache: new RedisCache($redis));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: new RedisCache($redis))));
 $config->safelists->ip('office', ['203.0.113.0/24']);
 
 // ── Layer 2: Blocklists ────────────────────────────────────────────────
@@ -450,7 +461,7 @@ SecRule ARGS "@rx (?i)\bon(load|error|click)\s*=" "id:941110,phase:2,deny,msg:'X
 SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec)\s*\(" "id:933100,phase:2,deny,msg:'RCE'"
 SecRule REQUEST_URI "@rx \.\.[\\/]" "id:930100,phase:2,deny,msg:'Path Traversal'"
 CRS);
-$config->blocklists->owasp('owasp', $rules);
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
 
 // ── Layer 4: Fail2Ban ─────────────────────────────────────────────────
 // The filter never matches pre-handler; your login handler signals each

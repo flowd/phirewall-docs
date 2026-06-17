@@ -40,7 +40,10 @@ export default defineConfig({
           { text: 'Rate Limiting', link: '/features/rate-limiting' },
           { text: 'Fail2Ban & Allow2Ban', link: '/features/fail2ban' },
           { text: 'Bot Detection & Matchers', link: '/features/bot-detection' },
+          { text: 'Trusted Bots', link: '/features/trusted-bots' },
           { text: 'OWASP Core Rule Set', link: '/features/owasp-crs' },
+          { text: 'Bot & AI Crawler Presets', link: '/features/bot-presets' },
+          { text: 'Bad-IP Blocklist Preset', link: '/features/bad-ip-preset' },
           { text: 'Storage Backends', link: '/features/storage' },
         ]
       },
