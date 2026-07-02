@@ -23,6 +23,10 @@ export default defineConfig({
       {
         text: 'Flowd GmbH',
         link: 'https://flowd.de'
+      },
+      {
+        text: 'v0.7.0',
+        link: 'https://github.com/flowd/phirewall/releases/tag/0.7.0'
       }
     ],
 
