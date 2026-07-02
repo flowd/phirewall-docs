@@ -88,8 +88,9 @@ class LoginHandler implements RequestHandlerInterface
 {
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $username = $request->getParsedBody()['username'] ?? '';
-        $password = $request->getParsedBody()['password'] ?? '';
+        $body = (array) $request->getParsedBody();
+        $username = $body['username'] ?? '';
+        $password = $body['password'] ?? '';
 
         if (!$this->authenticate($username, $password)) {
             // Retrieve the RequestContext attached by the middleware
