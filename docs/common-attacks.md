@@ -363,7 +363,7 @@ $config->allow2ban->add('volume-ban',
 
 ### API Endpoint Throttling
 
-Rate-limit API traffic per client IP, the value a caller cannot forge (behind a proxy, resolve it with `KeyExtractors::clientIp()` and a `TrustedProxyResolver`):
+Rate-limit API traffic per client IP, the value a caller cannot forge (behind a proxy, configure proxy trust once with `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))` and rules key on the resolved client IP by default):
 
 ```php
 $config->throttles->add('api',
@@ -373,7 +373,7 @@ $config->throttles->add('api',
 ```
 
 ::: warning Header keys are client-controlled
-A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold (a trivial bypass). Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')`: the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold (a trivial bypass). Key such rules on a value the client cannot freely change: the client IP (keyless rules key on the resolved client IP by default; set proxy trust with `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')`: the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
 :::
 
 ### Expensive Endpoint Protection
@@ -408,15 +408,14 @@ $config->tracks->add('sensitive-endpoints',
 
 When the count reaches 50, a `TrackHit` event is dispatched with `thresholdReached: true`. See [Track & Notifications](/advanced/track-notifications) for details.
 
-## Comprehensive Production Setup
+## Production Setup
 
-Combine all layers into a production-ready configuration:
+Combine all layers into a single production configuration:
 
 ```php
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Config\Rule\BlocklistRule;
@@ -432,13 +431,13 @@ $config->enableRateLimitHeaders();
 
 // Trusted proxy for correct client IP resolution
 $proxy = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
-$config->setIpResolver(KeyExtractors::clientIp($proxy));
+$config->setIpResolver($proxy->resolve(...));
 
 // ── Layer 1: Safelists ─────────────────────────────────────────────────
 $config->safelists->add('health',
     fn($req): bool => $req->getUri()->getPath() === '/health'
 );
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: new RedisCache($redis))));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: new RedisCache($redis))));
 $config->safelists->ip('office', ['203.0.113.0/24']);
 
 // ── Layer 2: Blocklists ────────────────────────────────────────────────
@@ -516,7 +515,7 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 
 2. **Safelist your health checks.** Internal monitoring endpoints should bypass all firewall rules to avoid false alerts.
 
-3. **Use `clientIp()` behind proxies.** If your application runs behind a load balancer or CDN, configure a `TrustedProxyResolver` so rate limits and bans apply to the real client IP; raw `KeyExtractors::ip()` would collapse every client onto the proxy's address. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
+3. **Configure proxy trust on the Config.** If your application runs behind a load balancer or CDN, set `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))` so rate limits and bans apply to the real client IP; keyless rules then key on the resolved client IP automatically. Avoid keying rules on the raw `REMOTE_ADDR` peer address directly - behind a proxy it collapses every client onto the proxy's address. If you need the raw peer for a specific purpose, read `$request->getServerParams()['REMOTE_ADDR']` directly. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
 
 4. **Start with logging, then enforce.** Use [Track rules](/advanced/track-notifications) to observe traffic patterns before enabling blocking rules.
 

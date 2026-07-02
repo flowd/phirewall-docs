@@ -77,7 +77,6 @@ When your application sits behind a load balancer, CDN (Content Delivery Network
 
 ```php
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 
 $proxy = new TrustedProxyResolver([
     '10.0.0.0/8',      // Internal network
@@ -85,16 +84,15 @@ $proxy = new TrustedProxyResolver([
     '192.168.0.0/16',  // Private ranges
 ]);
 
-// Default client-IP resolution for every rule added without an explicit key
-$config->setIpResolver(KeyExtractors::clientIp($proxy));
+// Configure proxy trust once; every rule without an explicit key keys on the resolved client IP.
+$config->setIpResolver($proxy->resolve(...));
 ```
 
-You can also use `clientIp()` on individual rules:
+Rules added without an explicit `key` argument automatically key on the resolved client IP - no per-rule wiring is needed:
 
 ```php
-$config->throttles->add('api', limit: 100, period: 60,
-    key: KeyExtractors::clientIp($proxy),
-);
+$config->throttles->add('api', limit: 100, period: 60);
+// Keys on the resolved client IP (via the resolver set above).
 ```
 
 A few details worth knowing:
@@ -106,7 +104,7 @@ A few details worth knowing:
 See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies) for the full behavior.
 
 ::: danger
-`KeyExtractors::ip()` reads `REMOTE_ADDR`, which behind a CDN or load balancer is the *proxy's* address, so every client collapses onto one key. Always install a client-IP resolver in that case. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting.
+The raw `REMOTE_ADDR` peer address is the connecting peer, not the client. Behind a CDN or load balancer that is the proxy's address, so every client collapses onto one key. If you need the raw peer address explicitly, read `$request->getServerParams()['REMOTE_ADDR']` directly. For the actual client IP, configure proxy trust once with `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))` and omit the `key` argument on your rules. And never trust `X-Forwarded-For` without configuring trusted proxies: an attacker can otherwise spoof this header to bypass rate limiting.
 :::
 
 ### What happens when the cache backend is unavailable?
@@ -270,7 +268,7 @@ See [Storage Backends](/features/storage) for a detailed comparison.
 
 ### Can I use Symfony Cache or Laravel Cache?
 
-Yes, Phirewall accepts any PSR-16 (PHP Standard Recommendation for Simple Caching) compatible implementation, but note that most host-framework caches are **not** PSR-16 out of the box: Laravel's `Cache` repository (`Illuminate\Contracts\Cache\Repository`) and TYPO3's caching framework (`FrontendInterface`) are not `Psr\SimpleCache\CacheInterface`, so passing one directly to `Config` is a type error. Symfony Cache exposes a PSR-16 adapter (`Symfony\Component\Cache\Psr16Cache`) you can wrap a pool in. For production, prefer the bundled `RedisCache` or `ApcuCache`: they implement `CounterStoreInterface` for atomic increments, whereas a generic PSR-16 cache may have non-atomic counter increments.
+Yes, Phirewall accepts any PSR-16 (PHP Standard Recommendation for Simple Caching) compatible implementation, but most host-framework caches are **not** PSR-16 out of the box: Laravel's `Cache` repository (`Illuminate\Contracts\Cache\Repository`) and TYPO3's caching framework (`FrontendInterface`) are not `Psr\SimpleCache\CacheInterface`, so passing one directly to `Config` is a type error. Symfony Cache exposes a PSR-16 adapter (`Symfony\Component\Cache\Psr16Cache`) you can wrap a pool in. For production, prefer the bundled `RedisCache` or `ApcuCache`: they implement `CounterStoreInterface` for atomic increments, whereas a generic PSR-16 cache may have non-atomic counter increments.
 
 ### Why does InMemoryCache not work in production?
 
@@ -290,7 +288,7 @@ Solutions:
 
 No. Phirewall supports a practical subset of the OWASP (Open Web Application Security Project) CRS (Core Rule Set) syntax, covering the most common variables (`ARGS`, `REQUEST_URI`, `REQUEST_HEADERS`, etc.) and operators (`@rx`, `@pm`, `@pmFromFile`, `@contains`, etc.). It is not a full ModSecurity replacement.
 
-For comprehensive OWASP CRS coverage, use a dedicated WAF (like ModSecurity) alongside Phirewall.
+For full OWASP CRS coverage, use a dedicated WAF (like ModSecurity) alongside Phirewall.
 
 ### How do I load custom OWASP rules?
 

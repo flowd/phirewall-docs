@@ -80,7 +80,7 @@ Two distinct problems make `InMemoryCache` unsuitable for the firewall under lon
 1. **No shared state across workers.** Each worker is a separate OS process with its own array, so a counter or ban set in one worker is invisible to the others. The effective rate limit becomes roughly N times the configured value (N workers), and a client banned on one worker is not banned on the rest.
 2. **Coroutine races within a worker.** In coroutine servers like Swoole, the plain PHP arrays have no locking, so concurrent coroutines in the same worker can race.
 
-Use a shared store under these runtimes: `RedisCache` (preferred) or `PdoCache`. Note that `ApcuCache` does **not** solve problem 1: APCu memory is per process, so counters and bans still fragment across workers.
+Use a shared store under these runtimes: `RedisCache` (preferred) or `PdoCache`. `ApcuCache` does **not** solve problem 1: APCu memory is per process, so counters and bans still fragment across workers.
 :::
 
 ## ApcuCache

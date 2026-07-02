@@ -143,7 +143,7 @@ new InfrastructureBanListener(
 | `$blockOnFail2Ban` | `bool` | `true` | Mirror Fail2Ban bans |
 | `$blockOnBlocklist` | `bool` | `false` | Mirror blocklist hits (request IP) |
 | `$keyToIp` | `?callable` | identity | Map a Fail2Ban key to an IP (default: assumes key is an IP) |
-| `$requestToIp` | `?callable` | `KeyExtractors::ip()` | Extract IP from a `ServerRequestInterface` |
+| `$requestToIp` | `?callable` | `REMOTE_ADDR` (raw peer) | Extract IP from a `ServerRequestInterface` |
 
 ### Wiring with PSR-14
 
@@ -383,7 +383,6 @@ A full setup combining Fail2Ban, infrastructure mirroring, and rate limiting:
 declare(strict_types=1);
 
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\RedisCache;
 use Flowd\Phirewall\Infrastructure\ApacheHtaccessAdapter;

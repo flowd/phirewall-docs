@@ -8,7 +8,7 @@ Track rules provide **passive counting without blocking**. They are ideal for ob
 
 ## How Tracking Works
 
-Track rules are evaluated **first** in the pipeline, before safelists and blocklists. They always run, even for requests that will be safelisted. This makes them reliable for comprehensive monitoring.
+Track rules are evaluated **first** in the pipeline, before safelists and blocklists. They always run, even for requests that will be safelisted. This makes them reliable for monitoring all traffic.
 
 ```text
 Request --> Track (passive) --> Safelist --> Blocklist --> Fail2Ban --> Throttle --> Allow2Ban --> Pass
@@ -62,7 +62,6 @@ $config->tracks
 Monitor login attempts per IP for dashboards and anomaly detection:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 $config->tracks->add('login-attempts',
     period: 3600,
@@ -87,7 +86,6 @@ $config->tracks->add('api-usage',
 Monitor access to admin or configuration pages:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 $config->tracks->add('admin-access',
     period: 600,

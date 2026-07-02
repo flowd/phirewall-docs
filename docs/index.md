@@ -20,7 +20,7 @@ features:
     details: Fixed-window, sliding-window, and multi-window throttling with dynamic per-request limits.
   - icon: "\uD83D\uDEE1\uFE0F"
     title: Bot Detection
-    details: Block known scanners, verify search engine bots via rDNS, and detect suspicious headers, each with a single method call.
+    details: Block known scanners and detect suspicious headers with a single method call, and verify search engine bots via reverse DNS using the built-in TrustedBotMatcher.
   - icon: "\uD83D\uDEAB"
     title: IP Blocking & Safelisting
     details: Safelist and blocklist IPs and CIDR ranges. Pattern backends with file-backed persistence and automatic expiration.

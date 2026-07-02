@@ -4,7 +4,7 @@ outline: deep
 
 # Portable Config
 
-`PortableConfig` expresses a firewall ruleset as plain, JSON-serializable data instead of PHP closures. Because a ruleset is just data, you can:
+`PortableConfig` expresses a firewall ruleset as plain, JSON-serializable data instead of PHP closures. Because a ruleset is data, you can:
 
 - **store it in a database** and pick up rule changes on the next request,
 - **ship it through a config service** (etcd, Consul, S3, a settings table),
@@ -95,14 +95,18 @@ Everything `PortableConfig` can express today.
 
 | Factory | Keys on |
 |---------|---------|
-| `keyIp()` | client IP (`REMOTE_ADDR`) |
+| `keyIp()` | client IP resolved via the Config's IP resolver (else `REMOTE_ADDR`), like keyless rules and `filterIp()` |
 | `keyMethod()` | HTTP method |
 | `keyPath()` | request path |
 | `keyHeader(name)` | raw value of header `name` |
 | `keyHashedHeader(name)` | sha256 fingerprint of header `name`, preferred for credential-bearing headers (`Authorization`, `Cookie`, `X-Api-Key`) so the raw value never reaches the cache/ban registry |
 
 ::: tip
-`keyIp()` keys on `REMOTE_ADDR`, which behind a CDN or load balancer is the proxy's address, not the client's. The IP resolver is a closure and therefore not portable; set it on the rebuilt `Config` with `setIpResolver(KeyExtractors::clientIp(new TrustedProxyResolver([...])))`. See [Client IP behind proxies](/getting-started#client-ip-behind-proxies).
+`keyIp()` is resolver-aware: it materializes as a keyless rule and late-binds to the evaluating `Config`'s IP resolver at runtime, exactly like keyless counter rules and `filterIp()`. Behind a CDN or load balancer, set proxy trust once on the `Config` with `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))` and all `keyIp()`-keyed rules (plus keyless rules and `filterIp()`) will key on the resolved client IP automatically. Without a resolver, `REMOTE_ADDR` is used.
+:::
+
+::: warning
+Never trust `X-Forwarded-For` or similar headers without configuring trusted proxies via `TrustedProxyResolver`. A `TrustedProxyResolver` only reads forwarded headers when the connecting peer matches a declared trusted proxy address; without that, a client can spoof any IP by sending their own `X-Forwarded-For` header. See [Client IP behind proxies](/getting-started#client-ip-behind-proxies).
 :::
 
 ### Pattern kinds (`PortableConfig::patternEntry()`)

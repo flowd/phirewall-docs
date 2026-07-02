@@ -8,7 +8,7 @@ Complete, copy-pasteable configurations for common scenarios. Each example is se
 
 ## Running the Built-in Examples
 
-The Phirewall repository includes 31 runnable examples:
+The Phirewall repository includes 28 runnable examples:
 
 ```bash
 git clone https://github.com/flowd/phirewall
@@ -22,17 +22,14 @@ php examples/01-basic-setup.php
 | 01 | [basic-setup](https://github.com/flowd/phirewall/blob/main/examples/01-basic-setup.php) | Minimal configuration to get started |
 | 02 | [brute-force-protection](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php) | Fail2Ban-style login protection |
 | 03 | [api-rate-limiting](https://github.com/flowd/phirewall/blob/main/examples/03-api-rate-limiting.php) | Tiered rate limits for APIs |
-| 04 | [sql-injection-blocking](https://github.com/flowd/phirewall/blob/main/examples/04-sql-injection-blocking.php) | OWASP-style SQLi detection |
-| 05 | [xss-prevention](https://github.com/flowd/phirewall/blob/main/examples/05-xss-prevention.php) | Cross-Site Scripting protection |
 | 06 | [bot-detection](https://github.com/flowd/phirewall/blob/main/examples/06-bot-detection.php) | Scanner and malicious bot blocking |
 | 07 | [ip-blocklist](https://github.com/flowd/phirewall/blob/main/examples/07-ip-blocklist.php) | File-backed IP/CIDR blocklists |
-| 08 | [comprehensive-protection](https://github.com/flowd/phirewall/blob/main/examples/08-comprehensive-protection.php) | Production-ready multi-layer setup |
+| 08 | [comprehensive-protection](https://github.com/flowd/phirewall/blob/main/examples/08-comprehensive-protection.php) | Multi-layer production setup |
 | 09 | [observability-monolog](https://github.com/flowd/phirewall/blob/main/examples/09-observability-monolog.php) | Event logging with Monolog |
 | 10 | [observability-opentelemetry](https://github.com/flowd/phirewall/blob/main/examples/10-observability-opentelemetry.php) | Distributed tracing with OpenTelemetry |
 | 11 | [redis-storage](https://github.com/flowd/phirewall/blob/main/examples/11-redis-storage.php) | Redis backend for multi-server deployments |
 | 12 | [apache-htaccess](https://github.com/flowd/phirewall/blob/main/examples/12-apache-htaccess.php) | Apache .htaccess IP blocking |
 | 13 | [benchmarks](https://github.com/flowd/phirewall/blob/main/examples/13-benchmarks.php) | Storage backend performance comparison |
-| 14 | [owasp-crs-files](https://github.com/flowd/phirewall/blob/main/examples/14-owasp-crs-files.php) | Loading OWASP CRS rules from files |
 | 15 | [in-memory-pattern-backend](https://github.com/flowd/phirewall/blob/main/examples/15-in-memory-pattern-backend.php) | Configuration-based CIDR/IP blocklists |
 | 16 | [allow2ban](https://github.com/flowd/phirewall/blob/main/examples/16-allow2ban.php) | Volume-based banning (inverse of fail2ban) |
 | 17 | [known-scanners](https://github.com/flowd/phirewall/blob/main/examples/17-known-scanners.php) | Block known attack tools by User-Agent |
@@ -51,11 +48,21 @@ php examples/01-basic-setup.php
 | 30 | [config-composition](https://github.com/flowd/phirewall/blob/main/examples/30-config-composition.php) | Layering configs (vendor → environment → tenant → deployment) |
 | 31 | [presets](https://github.com/flowd/phirewall/blob/main/examples/31-presets.php) | Ready-to-use rule presets and version comparison (compare `Presets::VERSION` against your own release feed) |
 
+### Companion Preset Packages
+
+Three companion packages ship ready-made presets, each with its own documentation and runnable examples. The former SQLi, XSS, and CRS-file examples (04, 05, 14) live in the OWASP CRS package now.
+
+| Package | Provides |
+|---------|----------|
+| [flowd/phirewall-preset-owasp-crs](https://github.com/flowd/phirewall-preset-owasp-crs) | OWASP CRS SecRule engine plus per-paranoia-level blocklist and fail2ban presets ([docs](/features/owasp-crs)) |
+| [flowd/phirewall-preset-bots](https://github.com/flowd/phirewall-preset-bots) | Block AI crawlers and rate-limit aggressive SEO bots with curated User-Agent presets ([docs](/features/bot-presets)) |
+| [flowd/phirewall-preset-bad-ips](https://github.com/flowd/phirewall-preset-bad-ips) | Block known-bad IPs using a bundled threat-intelligence feed snapshot ([docs](/features/bad-ip-preset)) |
+
 ---
 
 ## Framework Integration
 
-Production-ready integration examples for popular PHP frameworks. Each example includes storage, safelists, blocklists, rate limiting, brute-force protection, OWASP rules, and observability. Copy, paste, adapt.
+Integration examples for popular PHP frameworks. Each example includes storage, safelists, blocklists, rate limiting, brute-force protection, OWASP rules, and observability. Copy, paste, adapt.
 
 ::: tip OWASP CRS is a separate package
 The OWASP rules in these examples use the companion package. Install it first:
@@ -76,7 +83,6 @@ require __DIR__ . '/vendor/autoload.php';
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Config\Rule\BlocklistRule;
@@ -107,7 +113,7 @@ $proxyResolver = new TrustedProxyResolver([
     '172.16.0.0/12',
     '192.168.0.0/16',
 ]);
-$config->setIpResolver(KeyExtractors::clientIp($proxyResolver));
+$config->setIpResolver($proxyResolver->resolve(...));
 
 // ── Safelists ────────────────────────────────────────────────────────
 $config->safelists->add('health',
@@ -119,7 +125,7 @@ $config->safelists->add('metrics',
         $req->getUri()->getPath() === '/metrics'
 );
 $config->safelists->ip('office', ['10.0.0.0/8', '192.168.1.0/24']);
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
 // ── Blocklists ───────────────────────────────────────────────────────
 $config->blocklists->knownScanners();
@@ -145,23 +151,19 @@ $config->fail2ban->add('login-abuse',
     filter: fn(ServerRequestInterface $req): bool =>
         $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // ── Rate Limiting ────────────────────────────────────────────────────
 $config->throttles->add('burst',
     limit: 30, period: 5,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 $config->throttles->add('global',
     limit: 1000, period: 60,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // ── Allow2Ban ────────────────────────────────────────────────────────
 $config->allow2ban->add('flood-protection',
     threshold: 500, period: 60, banSeconds: 3600,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // ── PSR-17 Response Bodies ───────────────────────────────────────────
@@ -214,7 +216,6 @@ namespace App\Factory;
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Config\Rule\BlocklistRule;
@@ -250,9 +251,7 @@ class PhirewallFactory
         $trustedProxies = array_values(array_filter($this->trustedProxies));
         if ($trustedProxies !== []) {
             $proxyResolver = new TrustedProxyResolver($trustedProxies);
-            $config->setIpResolver(
-                KeyExtractors::clientIp($proxyResolver)
-            );
+            $config->setIpResolver($proxyResolver->resolve(...));
         }
 
         // ── Safelists ────────────────────────────────────────────
@@ -264,7 +263,7 @@ class PhirewallFactory
             fn(ServerRequestInterface $req): bool =>
                 str_starts_with($req->getUri()->getPath(), '/_profiler')
         );
-        $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
+        $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
         // ── Blocklists ───────────────────────────────────────────
         $config->blocklists->knownScanners();
@@ -443,7 +442,6 @@ namespace App\Providers;
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Config\Rule\BlocklistRule;
@@ -488,9 +486,7 @@ class PhirewallServiceProvider extends ServiceProvider
             $trustedProxies = array_filter(explode(',', (string) env('TRUSTED_PROXIES', '')));
             if ($trustedProxies !== []) {
                 $proxyResolver = new TrustedProxyResolver($trustedProxies);
-                $config->setIpResolver(
-                    KeyExtractors::clientIp($proxyResolver)
-                );
+                $config->setIpResolver($proxyResolver->resolve(...));
             }
 
             // ── Safelists ────────────────────────────────────────
@@ -502,7 +498,7 @@ class PhirewallServiceProvider extends ServiceProvider
                 fn(ServerRequestInterface $req): bool =>
                     str_starts_with($req->getUri()->getPath(), '/horizon')
             );
-            $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
+            $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
             // ── Blocklists ───────────────────────────────────────
             $config->blocklists->knownScanners();
@@ -680,7 +676,6 @@ require __DIR__ . '/vendor/autoload.php';
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Config\Rule\BlocklistRule;
@@ -704,14 +699,14 @@ $config->setFailOpen(true);
 
 // ── Trusted Proxies ──────────────────────────────────────────────────
 $proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
-$config->setIpResolver(KeyExtractors::clientIp($proxyResolver));
+$config->setIpResolver($proxyResolver->resolve(...));
 
 // ── Safelists ────────────────────────────────────────────────────────
 $config->safelists->add('health',
     fn(ServerRequestInterface $req): bool =>
         $req->getUri()->getPath() === '/health'
 );
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
 // ── Blocklists ───────────────────────────────────────────────────────
 $config->blocklists->knownScanners();
@@ -733,19 +728,17 @@ $config->fail2ban->add('login-abuse',
     filter: fn(ServerRequestInterface $req): bool =>
         $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // ── Rate Limiting ────────────────────────────────────────────────────
 $config->throttles->multi('api', [
     5  => 30,    // 30 req / 5 sec burst limit
     60 => 1000,  // 1000 req / min sustained limit
-], KeyExtractors::clientIp($proxyResolver));
+]);
 
 // ── Allow2Ban ────────────────────────────────────────────────────────
 $config->allow2ban->add('flood-protection',
     threshold: 500, period: 60, banSeconds: 3600,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // ── Application ──────────────────────────────────────────────────────
@@ -787,7 +780,6 @@ namespace App\Factory;
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Config\Rule\BlocklistRule;
@@ -818,16 +810,14 @@ class PhirewallMiddlewareFactory
             '10.0.0.0/8',
             '172.16.0.0/12',
         ]);
-        $config->setIpResolver(
-            KeyExtractors::clientIp($proxyResolver)
-        );
+        $config->setIpResolver($proxyResolver->resolve(...));
 
         // ── Safelists ────────────────────────────────────────────
         $config->safelists->add('health',
             fn(ServerRequestInterface $req): bool =>
                 $req->getUri()->getPath() === '/health'
         );
-        $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
+        $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
         // ── Blocklists ───────────────────────────────────────────
         $config->blocklists->knownScanners();
@@ -950,7 +940,6 @@ The smallest useful configuration. Protects against common scanners and rate-lim
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\InMemoryCache;
 
@@ -985,7 +974,6 @@ Tiered per-client-IP rate limits for an API, with a tighter cap on an expensive 
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
@@ -995,17 +983,16 @@ $config = new Config(new RedisCache($redis, 'api:'));
 $config->enableRateLimitHeaders();
 
 $proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+$config->setIpResolver($proxyResolver->resolve(...));
 
 // Global burst detection
 $config->throttles->add('burst',
     limit: 30, period: 5,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // Global per-IP limit
 $config->throttles->add('global',
     limit: 1000, period: 60,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // Expensive endpoint limit
@@ -1028,7 +1015,6 @@ The sliding window algorithm prevents the "double burst" problem at fixed window
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 
 $config = new Config(new InMemoryCache());
@@ -1050,7 +1036,6 @@ Apply multiple time windows to a single logical throttle for burst protection al
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 
 $config = new Config(new InMemoryCache());
@@ -1071,7 +1056,6 @@ Use closures for the `limit` and/or `period` parameters to vary rate limits base
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -1098,7 +1082,6 @@ Complete login protection with throttling, Fail2Ban, and tracking.
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
 
@@ -1180,7 +1163,6 @@ Use `RequestContext` to signal fail2ban failures after verifying credentials in 
 ```php
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Context\RequestContext;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -1271,12 +1253,12 @@ $config = new Config($cache);
 
 // Safelist known bots (Googlebot, Bingbot, Baidu, etc.) via RDNS
 // Pass a PSR-16 cache to avoid repeated DNS lookups
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
 // Safelist a custom internal bot
 $config->safelists->addRule(new SafelistRule('custom-bots', new TrustedBotMatcher([
     ['ua' => 'mycompany-crawler', 'hostname' => '.crawler.mycompany.com'],
-], ipResolver: $config->getIpResolver(), cache: $cache)));
+], cache: $cache)));
 ```
 
 See [Bot Detection](/features/bot-detection) for details.
@@ -1331,7 +1313,6 @@ Track rules count requests passively without blocking. Use the optional `limit` 
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 
 $config = new Config(new InMemoryCache());
@@ -1360,7 +1341,6 @@ Use PdoCache with MySQL, PostgreSQL, or SQLite when Redis is not available:
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\PdoCache;
 
 // SQLite with file persistence and WAL mode
@@ -1434,15 +1414,14 @@ See [PSR-17 Factories](/advanced/psr17) for details.
 
 ---
 
-## Production: Comprehensive Multi-Layer Protection
+## Production: Multi-Layer Protection
 
-A production-ready configuration combining safelists, blocklists, OWASP rules, bot detection, Fail2Ban, rate limiting, and observability.
+A production configuration combining safelists, blocklists, OWASP rules, bot detection, Fail2Ban, rate limiting, and observability.
 
 ```php
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Config\Rule\BlocklistRule;
@@ -1474,7 +1453,7 @@ $proxyResolver = new TrustedProxyResolver([
 ]);
 
 // Set global IP resolver so all IP-aware matchers use it
-$config->setIpResolver(KeyExtractors::clientIp($proxyResolver));
+$config->setIpResolver($proxyResolver->resolve(...));
 
 // === SAFELISTS ===
 $config->safelists->add('health',
@@ -1483,7 +1462,7 @@ $config->safelists->add('health',
 $config->safelists->add('metrics',
     fn($req) => $req->getUri()->getPath() === '/metrics'
 );
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(ipResolver: $config->getIpResolver(), cache: $cache)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
 // === BLOCKLISTS ===
 
@@ -1524,30 +1503,25 @@ $config->fail2ban->add('login-abuse',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 $config->fail2ban->add('persistent-scanner',
     threshold: 10, period: 60, ban: 86400,
     filter: fn($req) => true,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // === ALLOW2BAN ===
 $config->allow2ban->add('flood-protection',
     threshold: 500, period: 60, banSeconds: 3600,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 // === THROTTLES ===
 $config->throttles->add('global',
     limit: 1000, period: 60,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 $config->throttles->add('burst',
     limit: 50, period: 5,
-    key: KeyExtractors::clientIp($proxyResolver)
 );
 
 $config->throttles->add('write-ops',
@@ -1660,7 +1634,6 @@ Full logging setup with different severity levels:
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\RedisCache;
 use Flowd\Phirewall\Events\BlocklistMatched;
 use Flowd\Phirewall\Events\ThrottleExceeded;
@@ -1725,7 +1698,6 @@ Complete bot defense with threat feeds and file-backed blocklists:
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
 

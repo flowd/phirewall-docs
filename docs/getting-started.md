@@ -37,7 +37,7 @@ composer require monolog/monolog
 
 ## Step 1: Choose a Storage Backend
 
-Phirewall needs a PSR-16 (PHP Standard Recommendation for Simple Caching) cache for storing counters and ban states. Pick the backend that fits your deployment. If you are just trying Phirewall locally, start with `InMemoryCache`; choose a shared backend (Redis or PDO) before production.
+Phirewall needs a PSR-16 (PHP Standard Recommendation for Simple Caching) cache for storing counters and ban states. Pick the backend that fits your deployment. If you are trying Phirewall locally, start with `InMemoryCache`; choose a shared backend (Redis or PDO) before production.
 
 ::: code-group
 
@@ -107,14 +107,18 @@ Every safelist, blocklist, throttle, fail2ban, and track callback receives the i
 Safelisted requests bypass all other rules. Use them for health checks, internal monitoring, and other trusted traffic.
 
 ```php
+use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Matchers\TrustedBotMatcher;
+
 $config->safelists->add('health', fn($req) => $req->getUri()->getPath() === '/health');
 $config->safelists->add('metrics', fn($req) => $req->getUri()->getPath() === '/metrics');
 
 // Safelist specific IPs or CIDR ranges
 $config->safelists->ip('office', ['10.0.0.0/8', '192.168.1.0/24']);
 
-// Safelist verified search engine bots (Googlebot, Bingbot, etc.).
-// Verified via reverse DNS; pass a cache to skip repeat lookups (see Bot Detection).
+// Safelist verified search engine bots (Googlebot, Bingbot, etc.). The matcher uses the
+// Config's IP resolver automatically; in production also pass a PSR-16 cache to skip
+// repeat reverse-DNS lookups (see Bot Detection).
 $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher()));
 ```
 
@@ -141,7 +145,7 @@ $config->blocklists->suspiciousHeaders();
 
 ### Throttling (Rate Limiting)
 
-Throttled requests receive `429 Too Many Requests` with a `Retry-After` header. Counting rules (throttle, fail2ban, allow2ban, track) count requests against a *key*, an identity that defaults to the client IP (`KeyExtractors::ip()`, which reads `REMOTE_ADDR`). Pass a `key:` with a `KeyExtractors::*` callable to count against something else; behind a proxy, set the real client IP with a resolver (see [Client IP Behind Proxies](#client-ip-behind-proxies)).
+Throttled requests receive `429 Too Many Requests` with a `Retry-After` header. Counting rules (throttle, fail2ban, allow2ban, track) count requests against a *key*, an identity that defaults to the resolved client IP (the Config's IP resolver, falling back to `REMOTE_ADDR` when no resolver is set). Pass a `key:` with a `KeyExtractors::*` callable to count against something else; behind a proxy, configure proxy trust once on the Config with `setIpResolver` (see [Client IP Behind Proxies](#client-ip-behind-proxies)).
 
 ```php
 // 100 requests per minute per IP
@@ -303,7 +307,6 @@ namespace App\Factory;
 
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\ApcuCache;
@@ -456,7 +459,6 @@ namespace App\Providers;
 
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Store\ApcuCache;
@@ -599,7 +601,6 @@ final readonly class Phirewall
 
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Store\ApcuCache;
@@ -667,7 +668,6 @@ namespace App\Factory;
 
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware as PhirewallMiddleware;
 use Flowd\Phirewall\Store\ApcuCache;
@@ -729,7 +729,7 @@ class PhirewallMiddlewareFactory
 
 :::
 
-> **Middleware ordering:** Pipe Phirewall as early as possible, but after your error-handling middleware. Phirewall does not wrap the downstream handler, so a handler exception must be able to reach the error handler. See the [Examples](/examples#framework-integration) page for more detailed, production-ready integrations.
+> **Middleware ordering:** Pipe Phirewall as early as possible, but after your error-handling middleware. Phirewall does not wrap the downstream handler, so a handler exception must be able to reach the error handler. See the [Examples](/examples#framework-integration) page for more detailed integrations.
 
 ## Complete Example
 
@@ -866,7 +866,6 @@ When your application sits behind a load balancer or CDN (Content Delivery Netwo
 
 ```php
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 
 $resolver = new TrustedProxyResolver([
     '10.0.0.0/8',      // Internal network
@@ -874,17 +873,15 @@ $resolver = new TrustedProxyResolver([
     '192.168.0.0/16',  // Private ranges
 ]);
 
-// Use as a key extractor for any rule
-$config->throttles->add('api', limit: 100, period: 60,
-    key: KeyExtractors::clientIp($resolver)
-);
+// Configure proxy trust once on the Config; all rules then key on
+// the resolved client IP by default (no key: argument needed).
+$config->setIpResolver($resolver->resolve(...));
 
-// Or set globally so all IP-aware matchers use it
-$config->setIpResolver(KeyExtractors::clientIp($resolver));
+$config->throttles->add('api', limit: 100, period: 60);
 ```
 
 ::: danger Set a resolver behind a proxy, or every client shares one key
-`KeyExtractors::ip()` reads `REMOTE_ADDR` verbatim. Behind a CDN or load balancer that value is the *proxy's* address, so every client collapses onto a single throttle/ban key and your rate limits and bans become useless (or ban everyone at once). The same default applies to file-backed IP blocklists and infrastructure ban listeners. Whenever Phirewall runs behind a proxy, install a client-IP resolver, `$config->setIpResolver(KeyExtractors::clientIp(new TrustedProxyResolver([...])))`, so rules key on the originating client. And never trust `X-Forwarded-For` *without* configuring the trusted proxies: an attacker can otherwise spoof the header to forge any client IP.
+The raw `REMOTE_ADDR` peer address is used verbatim when no resolver is configured. Behind a CDN or load balancer that value is the *proxy's* address, so every client collapses onto a single throttle/ban key and your rate limits and bans become useless (or ban everyone at once). The same default applies to file-backed IP blocklists and infrastructure ban listeners. Whenever Phirewall runs behind a proxy, install a client-IP resolver, `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))`, so rules key on the originating client. And never trust `X-Forwarded-For` *without* configuring the trusted proxies: an attacker can otherwise spoof the header to forge any client IP.
 :::
 
 ### Resolver behavior
@@ -901,9 +898,9 @@ new TrustedProxyResolver(
 ```
 
 - **The default header is a single header.** `allowedHeaders` defaults to `['X-Forwarded-For']` only. If your stack emits the RFC 7239 `Forwarded` header instead, pass it explicitly: `new TrustedProxyResolver([...], ['Forwarded'])`, or `['Forwarded', 'X-Forwarded-For']` for both, so the header the resolver trusts is visible at the call site rather than inferred.
-- **Proxy headers are read only when the direct peer is trusted.** The resolver consults `X-Forwarded-For` (or `Forwarded`) only when `REMOTE_ADDR`, the address that actually connected, is itself in your trusted-proxy list. A request arriving directly from an untrusted client has its forwarded headers ignored and is keyed on `REMOTE_ADDR`.
+- **Proxy headers are read only when the direct peer is trusted.** The resolver consults `X-Forwarded-For` (or `Forwarded`) only when `REMOTE_ADDR`, the address that connected, is itself in your trusted-proxy list. A request arriving directly from an untrusted client has its forwarded headers ignored and is keyed on `REMOTE_ADDR`.
 - **All header instances are folded into one chain.** Whether intermediaries keep `X-Forwarded-For` as separate lines or fold them into one comma-separated value (the nginx default), the resolver flattens them and walks the chain right to left, returning the first hop that is not in your trusted-proxy list. The protection is this trusted-hop walk, not the number or order of header instances: a client-prepended value sits to the left of the addresses your proxies append, so it is returned only if every hop to its right is trusted. Correct trusted ranges are therefore essential, and stripping or overwriting the inbound header at the edge prevents spoofing outright.
-- **IPv6 is canonicalized.** An IPv4-mapped IPv6 peer (`::ffff:203.0.113.7`) collapses to its embedded IPv4 form, so a plain IPv4 rule or CIDR matches it and an attacker cannot bypass an IPv4 rule by presenting the mapped form. Alternate *genuine*-IPv6 spellings (expanded `2001:0db8::1` vs compressed `2001:db8::1`, mixed case) are also treated as one identity by `ip()` / CIDR **list** matching, which compares the raw binary address. When keys are derived through `KeyExtractors::clientIp()`, the resolver canonicalizes the address it returns, so per-client keys stay stable regardless of the spelling the client presents; the consistent-spelling caveat applies only to raw `KeyExtractors::ip()` (`REMOTE_ADDR`) or a custom resolver that does not canonicalize.
+- **IPv6 is canonicalized.** An IPv4-mapped IPv6 peer (`::ffff:203.0.113.7`) collapses to its embedded IPv4 form, so a plain IPv4 rule or CIDR matches it and an attacker cannot bypass an IPv4 rule by presenting the mapped form. Alternate *genuine*-IPv6 spellings (expanded `2001:0db8::1` vs compressed `2001:db8::1`, mixed case) are also treated as one identity by `ip()` / CIDR **list** matching, which compares the raw binary address. When a `TrustedProxyResolver` is set via `setIpResolver`, the resolver canonicalizes the address it returns, so per-client keys stay stable regardless of the spelling the client presents; the consistent-spelling caveat applies only to the raw `REMOTE_ADDR` peer address (read via `$request->getServerParams()['REMOTE_ADDR']`) or a custom resolver that does not canonicalize.
 
 ## First Test
 
@@ -925,6 +922,7 @@ curl -i http://localhost:8080/health
 - Learn about [Safelists & Blocklists](/features/safelists-blocklists)
 - Configure [Rate Limiting](/features/rate-limiting)
 - Set up [Fail2Ban & Allow2Ban](/features/fail2ban) for brute force protection
+- Add ready-made presets from the companion packages: [OWASP CRS](/features/owasp-crs), [Bot Presets](/features/bot-presets), and the [Bad-IP Preset](/features/bad-ip-preset)
 - Explore [Storage Backends](/features/storage) for production
 - Add [Observability](/advanced/observability) for monitoring
 - Use [Request Context](/advanced/request-context) for post-handler failure signaling

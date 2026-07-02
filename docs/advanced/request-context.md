@@ -19,7 +19,7 @@ $config->fail2ban->add('login',
 );
 ```
 
-With `RequestContext`, your handler verifies the credentials first, then signals a failure **only when authentication actually fails**. This gives you precise control over what counts as a failure.
+With `RequestContext`, your handler verifies the credentials first, then signals a failure **only when authentication fails**. This gives you precise control over what counts as a failure.
 
 ## How It Works
 
@@ -51,7 +51,6 @@ Configure a fail2ban rule with a filter that **always returns `false`**. This me
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Psr\Http\Message\ServerRequestInterface;
@@ -80,6 +79,7 @@ Retrieve the `RequestContext` from the request attribute and call `recordFailure
 
 ```php
 use Flowd\Phirewall\Context\RequestContext;
+use Nyholm\Psr7\Response;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -100,10 +100,10 @@ class LoginHandler implements RequestHandlerInterface
             // rule's own keyExtractor. Use the null-safe operator for safety.
             $context?->recordFailure('login-failures');
 
-            return new JsonResponse(['error' => 'Invalid credentials'], 401);
+            return new Response(401, ['Content-Type' => 'application/json'], json_encode(['error' => 'Invalid credentials'], JSON_THROW_ON_ERROR));
         }
 
-        return new JsonResponse(['success' => true, 'user' => $username], 200);
+        return new Response(200, ['Content-Type' => 'application/json'], json_encode(['success' => true, 'user' => $username], JSON_THROW_ON_ERROR));
     }
 }
 ```
@@ -125,7 +125,6 @@ The first parameter to `recordFailure()` must **exactly** match the `name` you u
 First, configure an allow2ban rule. To make the rule count *only* the events recorded by the handler (not every request), have the rule's `keyExtractor` return `null` pre-handler; the firewall then skips counting until the handler signals an explicit key via `recordHit()`:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 $config->allow2ban->add(
     'expensive-endpoint',
@@ -154,7 +153,7 @@ If the rule's `keyExtractor` returns a value pre-handler (the common case), the 
 $context?->recordHit('expensive-endpoint');
 ```
 
-Note that when the rule's `keyExtractor` returns a value pre-handler, **both** the pre-handler counter and the handler's `recordHit()` increment the counter, so the threshold should account for the doubled count.
+When the rule's `keyExtractor` returns a value pre-handler, **both** the pre-handler counter and the handler's `recordHit()` increment the counter, so the threshold should account for the doubled count.
 
 Recorded failures and hits are processed together after your handler returns; retrieve them all with `getRecordedSignals()`.
 
@@ -212,7 +211,7 @@ if ($context !== null) {
 
     $result->outcome->value;  // 'pass', 'safelisted', etc.
     $result->isPass();        // true if the request was allowed through
-    $result->rule;            // Name of the matching rule (null if simply passed)
+    $result->rule;            // Name of the matching rule (null if the request passed)
 }
 ```
 
@@ -246,7 +245,6 @@ require __DIR__ . '/vendor/autoload.php';
 
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Context\RequestContext;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -359,7 +357,6 @@ use Flowd\Phirewall\BanType;
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Context\RequestContext;
 use Flowd\Phirewall\Http\Firewall;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Nyholm\Psr7\Factory\Psr17Factory;

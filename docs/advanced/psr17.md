@@ -313,7 +313,6 @@ A full example combining both approaches:
 use Flowd\Phirewall\Config;
 use Flowd\Phirewall\Config\Response\Psr17BlocklistedResponseFactory;
 use Flowd\Phirewall\Config\Response\Psr17ThrottledResponseFactory;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -421,7 +420,6 @@ class PhirewallFactory
 ```php [Laravel]
 // In a service provider
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Middleware;
 use Flowd\Phirewall\Store\ApcuCache;
 use Nyholm\Psr7\Factory\Psr17Factory;

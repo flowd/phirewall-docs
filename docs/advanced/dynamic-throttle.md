@@ -4,7 +4,7 @@ outline: deep
 
 # Dynamic Throttle & Advanced Rate Limiting
 
-Phirewall's throttle system goes beyond simple fixed-window rate limiting. This page covers dynamic limits, sliding windows, multi-window throttling, and advanced patterns for building fine-grained rate limiting strategies.
+Phirewall's throttle system does more than fixed-window rate limiting. This page covers dynamic limits, sliding windows, multi-window throttling, and patterns for fine-grained rate limiting.
 
 For basic rate limiting setup, see [Rate Limiting](/features/rate-limiting).
 
@@ -18,7 +18,6 @@ Give different users different quotas based on a request header:
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -323,7 +322,7 @@ $config->throttles->add('api-limit',
 ```
 
 ::: tip
-For trusted traffic that should bypass **all** rules (not just throttles), use [safelists](/features/safelists-blocklists) instead. Safelisted requests skip the entire firewall pipeline, including blocklists, fail2ban, and track rules.
+For trusted traffic that should bypass **all** rules (not only throttles), use [safelists](/features/safelists-blocklists) instead. Safelisted requests skip the entire firewall pipeline, including blocklists, fail2ban, and track rules.
 :::
 
 ## Database-Driven Key Assignment
@@ -336,7 +335,7 @@ $userTiers = $db->fetchAll('SELECT user_id, plan FROM users');
 $tierMap = array_column($userTiers, 'plan', 'user_id');
 
 $config->throttles->add('db-tiered',
-    limit: fn(ServerRequestInterface $request) use ($tierMap): int =>
+    limit: fn(ServerRequestInterface $request): int =>
         match ($tierMap[$request->getAttribute('userId') ?? ''] ?? 'anonymous') {
             'enterprise' => 10000,
             'pro' => 1000,
@@ -375,9 +374,13 @@ $firewall->resetThrottle('api:p60', '192.168.1.100');
 $firewall->resetAll();
 ```
 
+::: warning
+`resetThrottle()` clears fixed-window, multi-window, and dynamic-period counters only. It does **not** reset sliding-window counters created via `throttles->sliding(...)`: sliding windows are stored under per-window keys (suffixed `.w.{windowStart}`) rather than the key `resetThrottle()` deletes. To clear a sliding-window counter, call `resetAll()` or let the windows expire (TTL = 2 x period).
+:::
+
 ## Best Practices
 
-1. **Use descriptive rule names.** Names appear in `X-RateLimit-*` headers, `ThrottleExceeded` events, and (when `enableResponseHeaders()` is active) `X-Phirewall-Matched` headers. Use `api-free-tier` instead of `rule1`.
+1. **Use descriptive rule names.** Names appear in `ThrottleExceeded` events and, when `enableResponseHeaders()` is active, in the `X-Phirewall-Matched` response header. (The `X-RateLimit-*` headers carry only numeric limit/remaining/reset values, not the rule name.) Use `api-free-tier` instead of `rule1`.
 
 2. **Return `null` to skip.** This is the primary mechanism for conditional rate limiting. When a key closure returns `null`, the rule is skipped with zero overhead.
 

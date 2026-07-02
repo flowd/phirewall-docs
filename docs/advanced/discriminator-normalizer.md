@@ -89,7 +89,7 @@ This ensures:
 | `ip-limit` | `ip-limit` |
 | `my rule with spaces` | `my_rule_with_spaces` |
 | (empty string) | `empty` |
-| (very long name) | `first_107_chars...-a1b2c3d4e5f6` |
+| (name over 120 chars) | `first_107_chars...-a1b2c3d4e5f6` |
 
 | User Key | Cache Key Suffix |
 |----------|-----------------|
@@ -210,6 +210,6 @@ The prefix is validated: it is trimmed (whitespace and a trailing `:` stripped),
 
 2. **Normalize application-level keys yourself.** The discriminator normalizer handles global concerns (case, trim). Domain-specific normalization (like email deduplication) should happen in your key closure.
 
-3. **Use consistent key structures.** When writing custom key closures, prefix your keys to avoid collisions between different rule types: `user:123` instead of just `123`.
+3. **Use consistent key structures.** When writing custom key closures, prefix your keys to avoid collisions between different rule types: `user:123` instead of `123`.
 
 4. **Avoid sensitive data in keys.** While user keys are SHA-256 hashed in cache, the raw key is still visible in event payloads (`TrackHit`, `ThrottleExceeded`, etc.). Use hashed or anonymized identifiers when possible.
