@@ -59,7 +59,7 @@ $config->fail2ban->add(
 | `$period` | `int` | Time window for counting matches in seconds (must be >= 1) |
 | `$ban` | `int` | Ban duration in seconds (must be >= 1) |
 | `$filter` | `Closure` | `fn(ServerRequestInterface): bool`, return `true` to count as a match |
-| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string`, return key to track, or `null` to skip. When the whole argument is omitted, defaults to the client IP from the Config's IP resolver (`Config::setIpResolver()`, typically `KeyExtractors::clientIp($proxy)`), falling back to `KeyExtractors::ip()` (REMOTE_ADDR). The resolver is read per request, so it can be set before or after the rule. |
+| `$key` | `?Closure` | `fn(ServerRequestInterface): ?string`, return key to track, or `null` to skip. When the whole argument is omitted, defaults to the client IP from the Config's IP resolver (`Config::setIpResolver()`), falling back to REMOTE_ADDR. Configure proxy trust once with `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))` and all keyless rules key on the resolved client IP. The resolver is read per request, so it can be set before or after the rule. |
 
 ::: warning
 Fail2Ban filters evaluate the **incoming request** before the handler runs. The filter can only inspect request data (path, method, headers, query parameters). It cannot see the application's response. To ban based on application outcomes (like actual failed logins), use the [Request Context API](#post-handler-signaling-with-requestcontext) instead.
@@ -70,7 +70,6 @@ Fail2Ban filters evaluate the **incoming request** before the handler runs. The 
 The most common use case: ban IPs that repeatedly POST to the login endpoint.
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 // Ban after 5 login attempts in 5 minutes, for 1 hour
 $config->fail2ban->add('login-brute-force',
@@ -91,7 +90,6 @@ Counting every POST to `/login` is simpler and works well for most applications.
 Credential stuffing uses stolen username/password lists from data breaches. Defend against it by combining IP-based banning with user-based throttling:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 // Per-IP tracking: ban after 10 login attempts in 10 minutes
 $config->fail2ban->add('credential-stuffing-ip',
@@ -157,7 +155,6 @@ $config->fail2ban->add('api-abuse',
 Ban IPs that persistently probe your application:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 $config->fail2ban->add('persistent-scanner',
     threshold: 10,     // 10 matched requests
@@ -208,7 +205,6 @@ Configure a fail2ban rule with a filter that always returns `false`. The filter 
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Store\InMemoryCache;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -234,8 +230,9 @@ class LoginController
 {
     public function handle(ServerRequestInterface $request): ResponseInterface
     {
-        $username = $request->getParsedBody()['username'] ?? '';
-        $password = $request->getParsedBody()['password'] ?? '';
+        $body = (array) $request->getParsedBody();
+        $username = $body['username'] ?? '';
+        $password = $body['password'] ?? '';
 
         if (!$this->auth->verify($username, $password)) {
             // Signal the failure; the firewall extracts the key from
@@ -273,7 +270,7 @@ Use the null-safe operator (`$context?->recordFailure(...)`) so your handler wor
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **Pre-handler filter** (path/method) | Simple, no handler changes | Counts all attempts, not just failures |
+| **Pre-handler filter** (path/method) | Simple, no handler changes | Counts all attempts, not only failures |
 | **Prior middleware + header** | Can signal actual failures | Requires extra middleware, complex flow |
 | **RequestContext API** | Signals actual failures from handler | Requires handler integration |
 
@@ -333,7 +330,6 @@ Note the parameter name difference: Fail2Ban uses `$ban`, Allow2Ban uses `$banSe
 Ban any IP that sends an excessive number of requests:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 // Ban any IP that sends more than 100 requests in 60 seconds, for 1 hour
 $config->allow2ban->add(
@@ -359,7 +355,7 @@ $config->allow2ban->add(
 ```
 
 ::: warning Header keys are client-controlled
-A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold (a trivial bypass). Key such rules on a value the client cannot freely change: the client IP (via `KeyExtractors::clientIp()` with a `TrustedProxyResolver`), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')`: the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
+A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, `X-User-Id`, …) is only as trustworthy as that header. A client can rotate or drop the header to land in a fresh counter on every request and never reach the threshold (a trivial bypass). Key such rules on a value the client cannot freely change: the client IP (configure proxy trust once with `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))` and omit the key so the rule keys on the resolved client IP), the authenticated principal your auth layer sets *after* verifying it, or a composite of both. When you must key on a credential-bearing header, use `KeyExtractors::hashedHeader('X-Api-Key')`: the raw value otherwise reaches the ban registry and event payloads (and your logs) in cleartext.
 :::
 
 ### Unauthenticated Endpoint Abuse
@@ -367,7 +363,6 @@ A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, 
 Ban clients that repeatedly access authenticated endpoints without credentials:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 // Ban IPs making more than 20 unauthenticated API requests in 5 minutes
 $config->allow2ban->add(
@@ -520,7 +515,6 @@ Use events to:
 Fail2Ban and Allow2Ban work best as part of a layered defense:
 
 ```php
-use Flowd\Phirewall\KeyExtractors;
 
 // Layer 1: Safelist trusted traffic
 $config->safelists->add('health', fn($req) => $req->getUri()->getPath() === '/health');
@@ -558,8 +552,8 @@ $config->throttles->add('global',
 
 5. **Monitor with events.** Always set up logging or alerting for `Fail2BanBanned` and `Allow2BanBanned` events so you know when bans are occurring and can detect false positives.
 
-6. **Use RequestContext for accuracy.** When you need to ban based on actual application failures (not just request patterns), use the [RequestContext API](#post-handler-signaling-with-requestcontext) to signal failures from your handler.
+6. **Use RequestContext for accuracy.** When you need to ban based on actual application failures (not only request patterns), use the [RequestContext API](#post-handler-signaling-with-requestcontext) to signal failures from your handler.
 
 7. **Use infrastructure mirroring.** For the most effective defense, mirror bans to Apache `.htaccess` or your web server so banned IPs are blocked before reaching PHP. See [Infrastructure Adapters](/advanced/infrastructure).
 
-8. **Choose the right mechanism.** Use Fail2Ban when you need a filter to detect specific bad behavior. Use Allow2Ban when you want a blanket volume limit with a ban (not just rate limiting).
+8. **Choose the right mechanism.** Use Fail2Ban when you need a filter to detect specific bad behavior. Use Allow2Ban when you want a blanket volume limit with a ban (not only rate limiting).

@@ -145,11 +145,15 @@ $skipped = $report['skipped']; // int - Lines that were skipped
 
 | Method | Parameters | Description |
 |--------|-----------|-------------|
-| `fromString()` | `string $rulesText, ?string $contextFolder` | Parse rules from a string |
-| `fromFile()` | `string $filePath` | Load rules from a single file |
-| `fromFiles()` | `list<string> $paths` | Load and merge multiple files |
-| `fromDirectory()` | `string $dir, ?callable $filter` | Load all files in a directory |
-| `fromStringWithReport()` | `string $rulesText` | Parse with statistics |
+| `fromString()` | `string $rulesText, ?string $contextFolder = null, ?int $maxValuesPerCrsVariable = null` | Parse rules from a string |
+| `fromFile()` | `string $filePath, ?int $maxValuesPerCrsVariable = null` | Load rules from a single file |
+| `fromFiles()` | `list<string> $paths, ?int $maxValuesPerCrsVariable = null` | Load and merge multiple files |
+| `fromDirectory()` | `string $dir, ?callable $filter = null, ?int $maxValuesPerCrsVariable = null` | Load all files in a directory |
+| `fromStringWithReport()` | `string $rulesText, ?int $maxValuesPerCrsVariable = null` | Parse with statistics |
+
+### Per-Variable Value Cap
+
+Every factory accepts an optional `$maxValuesPerCrsVariable`: a positive-int cap on how many values are collected per CRS variable per request. It bounds the evaluation cost of count-unbounded, attacker-controlled variables such as `ARGS` (a CPU-DoS guard). The default (`null`) derives the cap from twice PHP's `max_input_vars`, falling back to 2000 when the directive is unset or non-positive, so a request PHP can fully parse is never falsely truncated. When a variable *is* truncated at the cap, rules targeting it fail closed and treat the request as a match, so padding a payload past the cap cannot evade a rule. A value `< 1` throws `InvalidArgumentException`.
 
 ## Supported SecRule Syntax
 
@@ -190,7 +194,7 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `id:N` | Rule ID (required, must be unique) |
 | `phase:N` | Processing phase (currently informational) |
 | `deny` | Block the request (required for the rule to trigger blocking) |
-| `block` | Alias for `deny` -- both trigger blocking |
+| `block` | Alias for `deny` - both trigger blocking |
 | `msg:'text'` | Human-readable description for logging |
 
 ### Line Continuation
@@ -212,6 +216,26 @@ SecRule ARGS "@rx (?i)\bunion\b.*\bselect\b" "id:942100,phase:2,deny,msg:'SQLi'"
 ```
 
 ## Managing Rules
+
+### Tuning the Bundled Snapshot
+
+The presets from the [Quick Start](#quick-start) are fixed rule bundles. To tune the bundled
+CRS snapshot (for example, to drop a false-positive-prone rule), load it as a mutable
+`CoreRuleSet` via `Presets::coreRuleSet()` and wire it yourself:
+
+```php
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
+use Flowd\PhirewallPresetOwaspCrs\Presets;
+
+$rules = Presets::coreRuleSet(ParanoiaLevel::Level2);
+$rules->disable(942100); // SQLi via libinjection, if it false-positives for your app
+
+$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
+```
+
+`Presets::crsVersion()` returns the upstream CRS release tag the bundled rules were
+imported from, so you can log or alert on the snapshot your deployment is running.
 
 ### Disabling Rules
 
@@ -321,7 +345,7 @@ SecRule REQUEST_URI "@rx (?i)(%2e%2e%2f|%2e%2e/)" \
 
 ## Production Configuration
 
-A comprehensive rule set for production:
+A production rule set covering the main attack categories:
 
 ```php
 use Flowd\Phirewall\Config;
@@ -445,7 +469,7 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 
 | Operator | Evaluator Class | Behavior |
 |----------|----------------|----------|
-| `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode; values exceeding 8 KiB are skipped (not matched) |
+| `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode; values longer than 8 KiB are truncated to 8,192 bytes and the head is still matched (a PCRE engine error fails closed to a match) |
 | `@contains` | `ContainsEvaluator` | Case-insensitive substring search |
 | `@streq` | `StringEqualEvaluator` | Case-insensitive exact match |
 | `@startswith` / `@beginswith` | `StartsWithEvaluator` | Case-insensitive prefix match |
@@ -456,9 +480,9 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 Unsupported operators resolve to `UnsupportedOperatorEvaluator`, which never matches (safe no-op).
 
 ::: warning ReDoS protection: 8 KiB length guard on `@rx`
-`RegexEvaluator` skips any value whose byte length exceeds 8,192 bytes — the value is treated as non-matching. This is an intentional trade-off: running PCRE on unbounded attacker-controlled input risks catastrophic backtracking that can freeze the PHP process (ReDoS). Skipping overlength values mirrors the behavior of standard WAFs such as ModSecurity's `SecRequestBodyLimit`.
+`RegexEvaluator` does **not** skip overlength values. A value longer than 8,192 bytes is truncated to that length (dropping a partial trailing UTF-8 sequence) and the **head is still matched** against the pattern. This bounds the PCRE work on unbounded attacker-controlled input - which risks catastrophic backtracking that can freeze the PHP process (ReDoS) - while preventing evasion by padding a payload past the limit. A value that triggers a PCRE engine error (catastrophic backtracking, invalid UTF-8 under `/u`, backtrack/recursion limit) is treated as a **match** (fail-closed), so a malformed payload can never silently disable a rule.
 
-In practice, legitimate request values (query parameters, header values, cookie values) are rarely larger than a few kilobytes. If you are matching multi-megabyte request bodies via `@rx`, consider pre-processing them before passing to the firewall.
+In practice, legitimate request values (query parameters, header values, cookie values) are rarely larger than a few kilobytes, so the truncation only affects oversized, likely-hostile input.
 :::
 
 ### Adding Custom Operators
@@ -545,7 +569,6 @@ Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is s
     $config->fail2ban->add('persistent-attacker',
         threshold: 5, period: 60, ban: 86400,
         filter: fn($req) => true,
-        key: KeyExtractors::ip()
     );
     ```
 

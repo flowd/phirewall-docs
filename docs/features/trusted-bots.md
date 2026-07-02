@@ -73,8 +73,11 @@ the limit is bucketed:
 
 - A constant like `'trusted-bot'` shares one bucket across every verified crawler (a global
   cap on all trusted bots combined).
-- The client IP - `KeyExtractors::ip()($request)` - gives each verified crawler IP its own
-  cap.
+- The client IP gives each verified crawler IP its own cap. The raw `REMOTE_ADDR` peer address
+  is the connecting peer; behind a proxy or CDN that is the proxy's address. Keep proxy trust
+  configured in one place: reuse the resolver instance you registered via `setIpResolver()` and
+  return `$resolver->resolve($request)` from the key closure to bucket on the real client. Read
+  `$request->getServerParams()['REMOTE_ADDR']` directly if you need the raw peer address.
 - A per-bot token gives each crawler family a separate cap.
 
 ## Custom bots

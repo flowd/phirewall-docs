@@ -4,7 +4,7 @@ outline: deep
 
 # Observability
 
-Phirewall provides comprehensive observability through PSR-14 (PHP Standard Recommendation for Event Dispatching) events and built-in diagnostics counters. Every significant decision the firewall makes is observable, making it straightforward to integrate with any logging, metrics, or alerting system you already use.
+Phirewall provides observability through PSR-14 (PHP Standard Recommendation for Event Dispatching) events and built-in diagnostics counters. Every significant decision the firewall makes is observable, so you can integrate it with any logging, metrics, or alerting system you already use.
 
 ## Enabling Events
 
@@ -263,7 +263,7 @@ Access the counters from the dispatcher at any time via `$dispatcher->counters()
 
 ### Minimal Dispatcher
 
-The simplest possible dispatcher for quick debugging:
+A minimal dispatcher for quick debugging:
 
 ```php
 use Psr\EventDispatcher\EventDispatcherInterface;
@@ -279,7 +279,7 @@ $dispatcher = new class implements EventDispatcherInterface {
 
 ### Monolog Integration
 
-Full-featured logging with different severity levels for different event types:
+Logging with different severity levels for different event types:
 
 ```php
 use Monolog\Logger;

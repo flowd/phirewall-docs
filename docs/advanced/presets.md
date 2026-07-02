@@ -41,7 +41,7 @@ Resolve any preset by name with `Presets::get($name)` (a `PortableConfig`), pass
 
 ## Conventions and overrides
 
-- The shipped presets target signals that are universal across applications (scanner User-Agents, missing browser headers, well-known sensitive paths), so they assume nothing about your routing. A preset you build yourself is just a `PortableConfig`, so it can key on whatever fits your environment, including routes your own apps standardize.
+- The shipped presets target signals that are universal across applications (scanner User-Agents, missing browser headers, well-known sensitive paths), so they assume nothing about your routing. A preset you build yourself is a `PortableConfig`, so it can key on whatever fits your environment, including routes your own apps standardize.
 - Override any rule by applying the preset with your own portable rules that redefine the rule by the same name (later layer wins), or by rebuilding the preset's schema.
 
 > **Note:** `scannerBlocking()`'s `suspicious-headers` rule is the more aggressive of the two: some legitimate API clients, privacy tools, and embedded browsers also omit `Accept-*` headers. Drop or override it by name if your traffic includes non-browser clients.

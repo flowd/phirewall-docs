@@ -82,7 +82,7 @@ Design and development of the Mankido marketing website on TYPO3, providing a fl
 ## How We Work
 
 - **Long-term partnerships** over one-off projects
-- **Direct, technical communication**: no classic project managers, just senior engineers
+- **Direct, technical communication**: no classic project managers, only senior engineers
 - **Transparency & responsibility**: open error culture, clear budgets, accountability in operations
 
 ## Get in Touch

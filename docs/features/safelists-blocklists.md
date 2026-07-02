@@ -97,32 +97,19 @@ $config->safelists->ip('ipv6-loopback', '::1');
 
 Safelist verified search engine bots via reverse DNS verification. Wire `TrustedBotMatcher` onto the safelist with `addRule()`. See [Bot Detection](/features/bot-detection) for full details, and [Trusted Bots](/features/trusted-bots) for the matcher itself.
 
-```php
-use Flowd\Phirewall\Config\Rule\SafelistRule;
-use Flowd\Phirewall\Matchers\TrustedBotMatcher;
-
-$config->safelists->addRule(new SafelistRule($name, new TrustedBotMatcher(
-    additionalBots: [],
-    ipResolver: $config->getIpResolver(),
-    cache: null,
-)));
-```
-
-Pass `ipResolver: $config->getIpResolver()` so verification uses the real client IP behind a proxy, matching the [global IP resolver](#ip-resolution).
+The matcher **autowires the `Config`'s [global IP resolver](#ip-resolution)** when `ipResolver` is omitted, so verification uses the real client IP behind a proxy with no extra wiring. Pass an explicit `ipResolver:` only to override the resolver for a single rule - an explicit resolver is fixed and will not follow a composed `Config`'s merged resolver.
 
 ```php
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 
 // Safelist Google, Bing, Yahoo, Baidu, DuckDuckGo, Yandex, and Apple bots
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
-    ipResolver: $config->getIpResolver(),
-)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher()));
 
 // Add custom bots on top of the built-in list
 $config->safelists->addRule(new SafelistRule('bots', new TrustedBotMatcher([
     ['ua' => 'mypartnerbot', 'hostname' => '.partner.example.com'],
-], ipResolver: $config->getIpResolver())));
+])));
 ```
 
 ::: warning
@@ -132,10 +119,7 @@ Without a PSR-16 cache, each request with a bot-like User-Agent triggers blockin
 use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
-    ipResolver: $config->getIpResolver(),
-    cache: $cache,
-)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 ```
 :::
 
@@ -240,7 +224,7 @@ $config->blocklists->knownScanners(
 The built-in list covers: sqlmap, nikto, nmap, masscan, zmeu, havij, acunetix, nessus, openvas, w3af, dirbuster, gobuster, wfuzz, hydra, medusa, burpsuite, skipfish, whatweb, metasploit, nuclei, ffuf, feroxbuster, joomscan, and wpscan (26 substring patterns in total; Burp Suite and Metasploit are each matched under two spellings).
 
 ```php
-// Use defaults: blocks 24 known attack tools
+// Use defaults: 26 built-in scanner patterns
 $config->blocklists->knownScanners();
 
 // Add custom patterns on top of defaults
@@ -491,6 +475,8 @@ $config->blocklists->patternBlocklist('threat-intel', $entries);
 
 ::: tip
 Pattern backends are also the serializable, database-friendly equivalent of file-backed lists. To keep a block catalogue outside code (in a settings table or config service) and hot-reload it on change, express it as a [Portable Config](/advanced/portable-config).
+
+For a ready-made known-bad-IP blocklist built from a bundled threat-intelligence feed snapshot, use the companion package [`flowd/phirewall-preset-bad-ips`](/features/bad-ip-preset) instead of wiring your own feed.
 :::
 
 ## IP Resolution {#ip-resolution}
@@ -499,11 +485,10 @@ Both `safelists->ip()` and `blocklists->ip()` respect the global IP resolver set
 
 ```php
 use Flowd\Phirewall\Http\TrustedProxyResolver;
-use Flowd\Phirewall\KeyExtractors;
 
 // Set a global IP resolver for all IP-aware matchers
 $proxy = new TrustedProxyResolver(['10.0.0.0/8']);
-$config->setIpResolver(KeyExtractors::clientIp($proxy));
+$config->setIpResolver($proxy->resolve(...));
 
 // Now all ip() calls use the real client IP, not the proxy IP
 $config->safelists->ip('office', '203.0.113.10');
@@ -526,7 +511,7 @@ $config->safelists->ip('cloudflare-office', '203.0.113.10', ipResolver: $customR
 - **Alternate IPv6 spellings** (expanded `2001:0db8:0:0:0:0:0:1` vs compressed `2001:db8::1`, upper vs lower case) all resolve to one canonical identity, so a rule in any spelling matches all of them.
 
 ::: danger
-`KeyExtractors::ip()` reads raw `REMOTE_ADDR`; behind a proxy or CDN that is the proxy's address, so IP rules match the proxy rather than the client. Set a client-IP resolver (above) in that case. And never trust `X-Forwarded-For` without configuring trusted proxies; an attacker can otherwise spoof this header to bypass IP-based rules. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
+The raw `REMOTE_ADDR` peer address is the proxy's address behind a proxy or CDN, so IP rules would match the proxy rather than the client. Set a client-IP resolver (above) in that case. If you need to read the raw peer address explicitly, use `$request->getServerParams()['REMOTE_ADDR']` directly. And never trust `X-Forwarded-For` without configuring trusted proxies; an attacker can otherwise spoof this header to bypass IP-based rules. See [Client IP Behind Proxies](/getting-started#client-ip-behind-proxies).
 :::
 
 ## Evaluation Order

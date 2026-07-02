@@ -43,6 +43,11 @@ are deliberately excluded, as are robots.txt-only opt-out tokens like `Google-Ex
   send a truthful `User-Agent`; a hostile scraper can send anything. Use the
   [OWASP CRS](/features/owasp-crs) and [rate limiting](/features/rate-limiting) presets for
   hostile traffic.
-- **Throttles key on `REMOTE_ADDR`.** Behind a proxy or CDN, configure a trusted client-IP
-  resolver on the `Config` or every client buckets together.
+- **Throttles key on the resolved client IP.** These presets use `PortableConfig::keyIp()`, which late-binds
+  to the evaluating `Config`'s IP resolver (falling back to `REMOTE_ADDR` when none is set). Behind a proxy or CDN,
+  set the resolver once on your config and every preset throttle keys on the correct client IP automatically:
+  ```php
+  $config->setIpResolver((new \Flowd\Phirewall\Http\TrustedProxyResolver(['10.0.0.1']))->resolve(...));
+  ```
+  Without a configured resolver, all clients behind the proxy bucket together on the proxy address.
 - The catalogue is opinionated; override a rule by name to keep a crawler you value.

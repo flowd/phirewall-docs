@@ -6,6 +6,10 @@ outline: deep
 
 Phirewall provides three specialized matchers for bot and scanner detection: **Known Scanner Blocking**, **Suspicious Headers Detection**, and **Trusted Bot Verification**. Known scanners and suspicious headers are available as one-liner convenience methods on the blocklist section; trusted bot verification is wired by adding a `SafelistRule` with a `TrustedBotMatcher` to the safelist.
 
+::: tip Ready-made bot rules
+The companion package [`flowd/phirewall-preset-bots`](/features/bot-presets) ships curated presets that block AI crawlers and rate-limit aggressive SEO bots by User-Agent, complementing the matchers on this page.
+:::
+
 ## Known Scanner Blocking
 
 The `knownScanners()` method blocks requests whose User-Agent matches known attack tools and vulnerability scanners. It ships with a curated default list covering 24 tools (26 substring patterns, since Burp Suite and Metasploit each have two spellings).
@@ -156,7 +160,7 @@ Some legitimate clients may not send all standard headers: API clients, embedded
 
 ## Trusted Bot Verification (rDNS)
 
-Wiring a `TrustedBotMatcher` on the safelist safelists verified search engine bots using **reverse DNS (rDNS) verification**. This prevents fake bots: anyone can send `Googlebot` as a User-Agent, but only Google's real crawlers have IPs that resolve to `*.googlebot.com`.
+Wiring a `TrustedBotMatcher` onto the safelist verifies search-engine bots using **reverse DNS (rDNS) verification**. This prevents fake bots: anyone can send `Googlebot` as a User-Agent, but only Google's real crawlers have IPs that resolve to `*.googlebot.com`.
 
 For rate-limiting verified bots instead of fully safelisting them, see the dedicated [Trusted Bots](/features/trusted-bots) page.
 
@@ -167,13 +171,10 @@ use Flowd\Phirewall\Config\Rule\SafelistRule;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 
 // Safelist verified search engine bots
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
-    ipResolver: $config->getIpResolver(),
-    cache: $cache,
-)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 ```
 
-Pass `ipResolver: $config->getIpResolver()` so verification uses the correct client IP behind a proxy. Omit it only if you deliberately want to verify against `REMOTE_ADDR`.
+By default the matcher uses the `Config`'s IP resolver, so verification picks up the correct client IP behind a proxy with no extra wiring. Pass an explicit `ipResolver:` only to override the resolver for this rule - an explicit resolver is fixed and will not follow a composed `Config`'s merged resolver.
 
 ### Configuration
 
@@ -182,16 +183,23 @@ The matcher accepts these constructor arguments:
 ```php
 new TrustedBotMatcher(
     array $additionalBots = [],
+    ?callable $reverseResolve = null,   // test-only DNS seam; do not pass positionally
+    ?callable $forwardResolve = null,   // test-only DNS seam; do not pass positionally
     ?callable $ipResolver = null,
-    ?CacheInterface $cache = null
+    ?CacheInterface $cache = null,
+    int $cacheTtl = 86400,
 )
 ```
+
+Because `$ipResolver` is the **4th** parameter, always wire this matcher with **named arguments** (e.g. `new TrustedBotMatcher(cache: $cache)`), never positionally.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$additionalBots` | `list<array{ua: string, hostname: string}>` | Extra bots to recognize |
-| `$ipResolver` | `callable\|null` | IP resolver. Pass `$config->getIpResolver()` to use the config's global resolver (correct client IP behind a proxy). |
+| `$reverseResolve` / `$forwardResolve` | `callable\|null` | DNS-lookup overrides, intended as testing seams. Use named arguments if you ever need them; never pass positionally. |
+| `$ipResolver` | `callable\|null` | Per-rule IP resolver override. Leave `null` (default) to autowire the `Config`'s resolver - correct client IP behind a proxy. Set it only to resolve this rule's client IP differently from the rest. |
 | `$cache` | `CacheInterface\|null` | PSR-16 cache for DNS results (highly recommended) |
+| `$cacheTtl` | `positive-int` | TTL (seconds) for positive (verified) results. Default `86400` (24h); a value `<= 0` throws `InvalidArgumentException`. The negative-result TTL is the fixed 300s `NEGATIVE_CACHE_TTL`. |
 
 ### Verification Flow
 
@@ -239,7 +247,7 @@ Add your organization's internal crawlers:
 $config->safelists->addRule(new SafelistRule('custom-bots', new TrustedBotMatcher([
     ['ua' => 'mycompany-crawler', 'hostname' => '.crawler.mycompany.com'],
     ['ua' => 'internal-monitor', 'hostname' => '.monitoring.mycompany.com'],
-], ipResolver: $config->getIpResolver(), cache: $cache)));
+], cache: $cache)));
 ```
 
 ::: danger
@@ -251,10 +259,7 @@ The hostname suffix **must** start with a dot (e.g., `.googlebot.com`, not `goog
 DNS lookups are blocking I/O operations. **Always provide a PSR-16 cache in production** to avoid latency:
 
 ```php
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
-    ipResolver: $config->getIpResolver(),
-    cache: $cache,
-)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 ```
 
 | Cache Behavior | TTL |
@@ -301,23 +306,19 @@ $config->blocklists->add('scanner-paths', function ($req): bool {
 ```
 
 ::: tip
-For more comprehensive attack pattern detection beyond path matching, consider using the [OWASP Core Rule Set](/features/owasp-crs) integration which detects SQL injection, XSS, and other attacks in request payloads.
+For attack pattern detection beyond path matching, consider the [OWASP Core Rule Set](/features/owasp-crs) integration, which detects SQL injection, XSS, and other attacks in request payloads.
 :::
 
 ## Combining All Three
 
-Use all three matchers together for comprehensive bot management:
+Use all three matchers together for layered bot management:
 
 ```php
 use Flowd\Phirewall\Config\Rule\SafelistRule;
-use Flowd\Phirewall\KeyExtractors;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 
 // 1. Safelist verified search engine bots (they bypass all other rules)
-$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(
-    ipResolver: $config->getIpResolver(),
-    cache: $cache,
-)));
+$config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatcher(cache: $cache)));
 
 // 2. Block known attack tools
 $config->blocklists->knownScanners();
