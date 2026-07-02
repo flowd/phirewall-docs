@@ -109,6 +109,14 @@ $cache = new ApcuCache();
 $config = new Config($cache);
 ```
 
+### With Custom Namespace
+
+Every key is stored under a namespace prefix (default `Phirewall:`) so Phirewall's entries do not collide with other code sharing the same APCu segment, and `clear()` deletes only that namespace instead of wiping the whole shared segment:
+
+```php
+$cache = new ApcuCache('myapp:firewall:');
+```
+
 ### Characteristics
 
 - Shared memory within a single PHP-FPM pool
@@ -439,7 +447,7 @@ phirewall.track.api-calls.<sha256 of "user-123">
 Use `$config->setKeyPrefix('myapp')` to change the prefix and avoid collisions when sharing a cache instance.
 
 ::: tip Key segments join with `.`
-`CacheKeyGenerator` (and the trusted-bot rDNS cache) join key segments with `.` rather than `:`. PSR-16 reserves `:` for the *cache implementation*, not its callers, so joining with `.` keeps Phirewall's own keys spec-compliant. `RedisCache`'s own namespace prefix (default `Phirewall:`) is the backend's keyspace, applied *after* the public key, and is unaffected.
+`CacheKeyGenerator` (and the trusted-bot rDNS cache) join key segments with `.` rather than `:`. PSR-16 reserves `:` for the *cache implementation*, not its callers, so joining with `.` keeps Phirewall's own keys spec-compliant. `RedisCache`'s and `ApcuCache`'s own namespace prefix (default `Phirewall:` for both) is the backend's keyspace, applied *after* the public key, and is unaffected.
 :::
 
 See [Discriminator Normalizer](/advanced/discriminator-normalizer) for details on how keys are sanitized.
