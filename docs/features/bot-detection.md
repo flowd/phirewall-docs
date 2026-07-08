@@ -282,8 +282,8 @@ $config->blocklists->add('scanner-paths', function ($req): bool {
     $path = strtolower($req->getUri()->getPath());
 
     $scannerPaths = [
-        // Common admin panels
-        '/admin-panel', '/admin-login', '/xmlrpc.php',
+        // Cloud and credential leaks
+        '/.aws/credentials', '/.htpasswd', '/.ssh/id_rsa',
         // Database tools
         '/phpmyadmin', '/pma', '/mysqladmin',
         // Sensitive files

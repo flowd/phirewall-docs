@@ -64,7 +64,7 @@ use Flowd\Phirewall\Http\Firewall;
 $effective = $vendorBaseline->with($environmentOverlay, $tenantOverlay, $deploymentTweak);
 
 // Rules unioned by name, base ordering preserved:
-$effective->blocklists->rules();   // ['scanners' (tenant wins), 'bad-net', 'admin-probe', ...]
+$effective->blocklists->rules();   // ['scanners' (tenant wins), 'bad-net', 'secrets-probe', ...]
 $effective->allow2ban->rules();    // ['volume-cap'] contributed by the tenant overlay
 
 // Last-explicit-wins options:
