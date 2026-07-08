@@ -180,6 +180,7 @@ Phirewall dispatches events for every significant decision. You can listen for a
 | `SafelistMatched` | A request matches a safelist rule | `rule`, `serverRequest` |
 | `BlocklistMatched` | A request matches a blocklist rule | `rule`, `serverRequest` |
 | `ThrottleExceeded` | A rate limit is exceeded | `rule`, `key`, `limit`, `period`, `count`, `retryAfter` |
+| `Fail2BanMatched` | A Fail2Ban filter match is blocked below the threshold | `rule`, `key`, `threshold`, `period`, `count` |
 | `Fail2BanBanned` | A client is banned by Fail2Ban | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count` |
 | `Allow2BanBanned` | A client is banned by Allow2Ban | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count` |
 | `PerformanceMeasured` | Every firewall decision (for metrics) | `decisionPath`, `durationMicros`, `ruleName` |
@@ -348,7 +349,7 @@ The returned array is organized by category, each with a total and a breakdown b
 ]
 ```
 
-Categories tracked: `safelisted`, `blocklisted`, `throttle_exceeded`, `fail2ban_banned`, `allow2ban_banned`, `track_hit`, `passed`, `fail2ban_blocked`.
+Categories tracked: `safelisted`, `blocklisted`, `throttle_exceeded`, `fail2ban_matched`, `fail2ban_banned`, `allow2ban_banned`, `track_hit`, `passed`, `fail2ban_blocked`.
 
 ### Exposing as a Prometheus-Style Metrics Endpoint
 

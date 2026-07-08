@@ -42,8 +42,12 @@ $config = new Config(new InMemoryCache());
 $config = $config->with(Presets::blocklist(ParanoiaLevel::Level1));
 ```
 
-Prefer to ban repeat offenders rather than block every single match? Use the
-fail2ban preset instead:
+Want to also ban repeat offenders? Use the fail2ban preset instead. A CRS
+match is malicious by definition, so from 0.8 both presets block every match
+with `403`; the difference is that the fail2ban preset additionally **bans**
+the key after the threshold. A banned attacker is then blocked by a cheap ban
+lookup (the CRS engine no longer runs for them), and the ban is observable via
+`Fail2BanBanned` and mirrorable to your web server:
 
 ```php
 use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
@@ -562,13 +566,13 @@ Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is s
 
 2. **Use unique rule IDs.** Each rule must have a unique `id`. Use the OWASP convention: 9xxxxx for attack categories (942xxx for SQLi, 941xxx for XSS, etc.).
 
-3. **Combine with fail2ban.** Use OWASP rules to detect attacks and fail2ban to ban repeat offenders:
+3. **Ban persistent attackers by volume.** An OWASP match is blocked at the blocklist layer (403) *before* Fail2Ban runs, so a Fail2Ban filter never sees it (and from 0.8 `filter: fn($req) => true` would block every request that reaches the layer). To also ban a client that keeps probing, add an Allow2Ban volume cap, or mirror the OWASP bans to your web server with an [infrastructure adapter](/advanced/infrastructure):
 
     ```php
     $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
-    $config->fail2ban->add('persistent-attacker',
-        threshold: 5, period: 60, ban: 86400,
-        filter: fn($req) => true,
+    // Ban clients that keep hitting after passing the OWASP layer.
+    $config->allow2ban->add('persistent-attacker',
+        threshold: 100, period: 60, banSeconds: 86400,
     );
     ```
 

@@ -66,9 +66,9 @@ Phirewall evaluates rules in a strict, deterministic order. The first match wins
 1. **Track**: passive counting, never blocks
 2. **Safelist**: if matched, bypass all other checks (returns 200)
 3. **Blocklist**: if matched, returns 403 Forbidden
-4. **Fail2Ban**: if already banned, 403; if filter matches, increment the failure counter
+4. **Fail2Ban**: if already banned, 403; if the filter matches, block with 403 and count (the Nth match also bans)
 5. **Throttle**: if counter exceeds limit, returns 429 Too Many Requests
-6. **Allow2Ban**: if threshold exceeded, returns 403
+6. **Allow2Ban**: counts every request (or only filtered ones); returns 403 once the threshold is reached
 7. **Pass**: request reaches your application
 
 ### How do I handle trusted proxies?
@@ -160,14 +160,14 @@ See [PSR-17 Factories](/advanced/psr17) for full details.
 
 | Feature | Fail2Ban | Allow2Ban |
 |---------|----------|-----------|
-| Counts | Only requests matching the `filter` predicate | **Every** request for the key |
-| Filter | Required | Not used |
-| Use case | Ban after specific failures (e.g., wrong password) | Ban after too many total requests |
-| Think of it as | "5 bad requests and you're out" | "500 total requests and you're out" |
+| Filter | Required: marks a request as malicious | Optional: without it counts every request, with it counts only matches |
+| On a match | **Blocks immediately** (403) and counts | **Lets the request pass** and counts, until the threshold |
+| Use case | Unambiguously malicious matches (scanner paths, invalid signatures), signal-only rules | Login brute-force counting, volume abuse |
+| Think of it as | "any bad request is blocked; N bad requests and you're banned" | "N requests and you're out, but they pass until then" |
 
-**Fail2Ban** requires a filter closure that identifies "bad" requests. Only matching requests increment the counter. This is ideal for brute force protection on specific endpoints.
+**Fail2Ban** requires a filter closure that marks a request as malicious. From 0.8 every match is blocked with 403; the Nth match also bans the key. Use it only for unambiguously malicious matches, or as a signal-only rule (`filter: fn() => false`) driven by [`RequestContext::recordFailure()`](/advanced/request-context).
 
-**Allow2Ban** counts every request for a given key with no filter. It bans as soon as the total volume reaches the threshold. This is ideal for detecting and blocking aggressive scrapers or bots.
+**Allow2Ban** counts requests for a key, either every request (a hard volume cap) or only those an optional filter matches, and lets matching requests pass until the threshold. It bans as soon as the counted volume reaches the threshold. This is the natural home for login brute-force counting and for blocking aggressive scrapers or bots by volume.
 
 See [Fail2Ban & Allow2Ban](/features/fail2ban) for details.
 

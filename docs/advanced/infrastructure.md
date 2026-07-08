@@ -418,11 +418,15 @@ $dispatcher = new class ($infraListener) implements EventDispatcherInterface {
 
 $config = new Config($cache, $dispatcher);
 
-// Login brute force protection with infrastructure mirroring
-$config->fail2ban->add('login-abuse',
+// Scanner-probe banning with infrastructure mirroring. Each probe is
+// unambiguously malicious, so Fail2Ban blocks it on match and bans the IP
+// after the threshold; the ban is mirrored to the web server below.
+$config->fail2ban->add('scanner-probe',
     threshold: 5, period: 300, ban: 3600,
-    filter: fn($req) => $req->getMethod() === 'POST'
-        && $req->getUri()->getPath() === '/login',
+    filter: fn($req) => (bool) preg_match(
+        '#^/(\.env|\.git|\.aws/credentials|\.htpasswd)#i',
+        $req->getUri()->getPath(),
+    ),
 );
 
 // Standard rate limiting

@@ -173,26 +173,30 @@ $config->enableRateLimitHeaders();
 
 See [Rate Limiting](/features/rate-limiting) and [Dynamic Throttle](/advanced/dynamic-throttle) for advanced usage.
 
-### Fail2Ban (Brute Force Protection)
+### Fail2Ban (Malicious-Match Blocking)
 
-Automatically ban clients after repeated failures. The filter evaluates each incoming request; matching requests increment a failure counter, and the client is banned as soon as the count reaches the threshold (e.g., `threshold: 5` bans on the 5th matching request; that request is itself blocked).
+A Fail2Ban filter marks a request as malicious, so **every match is blocked with `403`** and counted; the Nth match additionally bans the key. Use it for unambiguously malicious requests (scanner paths, invalid signatures), not for counting legitimate traffic.
 
 ```php
-// Ban IPs that POST to /login more than 5 times in 5 minutes
-$config->fail2ban->add('login-abuse',
+// Block and ban IPs probing scanner paths (each probe is blocked on the spot)
+$config->fail2ban->add('scanner-probe',
     threshold: 5,
-    period: 300,
-    ban: 3600,
-    filter: fn($req) => $req->getMethod() === 'POST'
-        && $req->getUri()->getPath() === '/login',
+    period: 60,
+    ban: 86400,
+    filter: fn($req) => (bool) preg_match(
+        '#^/(\.env|\.git|\.aws/credentials)#i',
+        $req->getUri()->getPath(),
+    ),
 );
 ```
 
-For post-handler failure signaling (e.g., recording failures after verifying credentials), see [Request Context](/advanced/request-context).
+::: warning
+Do **not** use a Fail2Ban filter to count legitimate requests such as login POSTs: from 0.8 the first match is blocked. For login brute-force, use [Allow2Ban with a filter](/features/fail2ban#allow2ban) or post-handler signaling via [Request Context](/advanced/request-context).
+:::
 
 ### Allow2Ban (Request Volume Banning)
 
-Allow2Ban is the inverse of Fail2Ban: it counts every request for a key and bans as soon as the count reaches the threshold (`threshold: 1000` bans on the 1000th request), without needing a filter predicate.
+Allow2Ban counts requests for a key and bans as soon as the count reaches the threshold (`threshold: 1000` bans on the 1000th request), letting counted requests pass until then. Without a filter it counts every request (a hard volume cap); with an optional filter it counts only the matching requests.
 
 ```php
 // Ban any IP that sends more than 1000 requests in 60 seconds
@@ -200,6 +204,14 @@ $config->allow2ban->add('high-volume',
     threshold: 1000,
     period: 60,
     banSeconds: 3600,
+);
+
+// Or count login attempts (POST /login) and ban after 30 in 5 minutes.
+// Successful attempts count too; for exact failure counting use RequestContext.
+$config->allow2ban->add('login-brute-force',
+    threshold: 30, period: 300, banSeconds: 3600,
+    filter: fn($req) => $req->getMethod() === 'POST'
+        && $req->getUri()->getPath() === '/login',
 );
 ```
 
@@ -338,9 +350,11 @@ class PhirewallFactory
         $config->blocklists->knownScanners();
         $config->blocklists->suspiciousHeaders();
 
-        // Fail2Ban
-        $config->fail2ban->add('login-abuse',
-            threshold: 5, period: 300, ban: 3600,
+        // Allow2Ban brute-force counting: count login POSTs and ban the IP
+        // after 5 in 5 min. Real login attempts pass until the threshold; a
+        // pre-handler Fail2Ban filter would block the first attempt from 0.8.
+        $config->allow2ban->add('login-abuse',
+            threshold: 5, period: 300, banSeconds: 3600,
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
@@ -499,9 +513,11 @@ class PhirewallServiceProvider extends ServiceProvider
             $config->blocklists->knownScanners();
             $config->blocklists->suspiciousHeaders();
 
-            // Fail2Ban
-            $config->fail2ban->add('login-abuse',
-                threshold: 5, period: 300, ban: 3600,
+            // Allow2Ban brute-force counting: count login POSTs and ban the IP
+            // after 5 in 5 min. Real login attempts pass until the threshold; a
+            // pre-handler Fail2Ban filter would block the first attempt from 0.8.
+            $config->allow2ban->add('login-abuse',
+                threshold: 5, period: 300, banSeconds: 3600,
                 filter: fn(ServerRequestInterface $req): bool =>
                     $req->getMethod() === 'POST'
                     && $req->getUri()->getPath() === '/login',
@@ -626,9 +642,11 @@ $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatch
 $config->blocklists->knownScanners();
 $config->blocklists->suspiciousHeaders();
 
-// Fail2Ban
-$config->fail2ban->add('login-abuse',
-    threshold: 5, period: 300, ban: 3600,
+// Allow2Ban brute-force counting: count login POSTs and ban the IP after
+// 5 in 5 min. Real login attempts pass until the threshold; a pre-handler
+// Fail2Ban filter would block the first attempt from 0.8.
+$config->allow2ban->add('login-abuse',
+    threshold: 5, period: 300, banSeconds: 3600,
     filter: fn(ServerRequestInterface $req): bool =>
         $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
@@ -697,9 +715,11 @@ class PhirewallMiddlewareFactory
         $config->blocklists->knownScanners();
         $config->blocklists->suspiciousHeaders();
 
-        // Fail2Ban
-        $config->fail2ban->add('login-abuse',
-            threshold: 5, period: 300, ban: 3600,
+        // Allow2Ban brute-force counting: count login POSTs and ban the IP
+        // after 5 in 5 min. Real login attempts pass until the threshold; a
+        // pre-handler Fail2Ban filter would block the first attempt from 0.8.
+        $config->allow2ban->add('login-abuse',
+            threshold: 5, period: 300, banSeconds: 3600,
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
@@ -771,11 +791,14 @@ $config->blocklists->knownScanners();
 // Rate limit: 10 requests per minute per IP
 $config->throttles->add('ip-limit', limit: 10, period: 60);
 
-// Fail2Ban: Ban IPs that POST to /login more than 3 times in 2 minutes
-$config->fail2ban->add('login',
+// Allow2Ban: Ban IPs that POST to /login more than 3 times in 2 minutes.
+// Login POSTs are legitimate requests, so count them with Allow2Ban (they
+// pass until the threshold) rather than a Fail2Ban filter (which blocks
+// every match from 0.8).
+$config->allow2ban->add('login',
     threshold: 3,
     period: 120,
-    ban: 300,
+    banSeconds: 300,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
 );
@@ -815,9 +838,9 @@ The evaluation order is:
 1. **Track** rules are always evaluated first (passive counting, never blocks)
 2. **Safelist**: if matched, the request bypasses all remaining checks
 3. **Blocklist**: if matched, the request is rejected with `403`
-4. **Fail2Ban**: if the client is already banned, `403`; if the filter matches, increment the failure counter
+4. **Fail2Ban**: if the client is already banned, `403`; if the filter matches, block with `403` and count (the Nth match also bans)
 5. **Throttle**: if the counter exceeds the limit, `429` with `Retry-After`
-6. **Allow2Ban**: if the client has exceeded the request threshold, `403` with `Retry-After`
+6. **Allow2Ban**: counts the request (every request, or only filtered ones), and `403` with `Retry-After` once the threshold is reached
 7. **Pass**: the request reaches your application
 
 ## Fail-Open / Fail-Closed

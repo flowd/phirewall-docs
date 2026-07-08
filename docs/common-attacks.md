@@ -12,7 +12,7 @@ Protect login endpoints with layered rate limiting and fail2ban.
 
 ### Post-Handler Failure Signaling (recommended)
 
-The accurate way to ban on *real* failed logins is to record the failure **after** your handler has verified the credentials, using [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext). The fail2ban rule's filter never matches on its own (`fn() => false`); your handler decides what counts as a failure and records it, and the middleware processes the recorded signal once the handler returns. This pattern is demonstrated in [`examples/02-brute-force-protection.php`](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php).
+The accurate way to ban on *real* failed logins is to record the failure **after** your handler has verified the credentials, using [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext). The fail2ban rule's filter never matches on its own (`fn() => false`), so nothing is blocked pre-handler; your handler decides what counts as a failure and records it, and the middleware processes the recorded signal once the handler returns. This pattern is demonstrated in [`examples/27-request-context.php`](https://github.com/flowd/phirewall/blob/main/examples/27-request-context.php). To count login attempts with a request-inspectable filter instead (banning after a generous threshold, since successful attempts count too), [`examples/02-brute-force-protection.php`](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php) uses Allow2Ban with a filter.
 
 ```php
 use Flowd\Phirewall\Config;
@@ -504,9 +504,9 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 | Track | Observe and count (never blocks) | - |
 | Safelist | Bypass all remaining checks | 200 (pass-through) |
 | Blocklist | IP lists, OWASP rules, patterns | 403 |
-| Fail2Ban | Ban after repeated filtered failures | 403 |
+| Fail2Ban | Block every filter match; ban after repeated matches | 403 |
 | Throttle | Rate limiting (fixed, sliding, multi) | 429 |
-| Allow2Ban | Ban after exceeding request threshold | 403 |
+| Allow2Ban | Count (all or filtered), ban after threshold | 403 |
 | Pass | No rule matched | 200 (pass-through) |
 
 ## Best Practices

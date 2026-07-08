@@ -60,8 +60,8 @@ Everything `PortableConfig` can express today.
 | `safelist(name, filter)` | Bypass all checks when the filter matches |
 | `blocklist(name, filter)` | Deny (403) when the filter matches |
 | `throttle(name, limit, period, key, sliding = false, scope = null)` | Fixed or sliding-window rate limit (429); the optional `scope` filter restricts which requests the throttle counts (e.g. only `/api`) |
-| `fail2ban(name, threshold, period, ban, filter, key)` | Auto-ban after repeated matching ("bad") requests |
-| `allow2ban(name, threshold, period, ban, key)` | Hard volume cap: ban after too many *total* requests for a key |
+| `fail2ban(name, threshold, period, ban, filter, key)` | Block every filter match (403) and ban after the threshold; use for unambiguously malicious matches or a `filterNone()` signal-only rule |
+| `allow2ban(name, threshold, period, ban, key, filter = null)` | Ban after too many counted requests for a key; without `filter` a hard volume cap, with `filter` counts only matches and lets them pass until the threshold |
 | `track(name, period, filter, key, limit = null)` | Passive counting with optional alert threshold |
 | `addPatternBackend(name, entries)` | Register a reusable catalogue of block patterns |
 | `blocklistFromBackend(name, backendName)` | Add a blocklist that matches against a registered backend |
@@ -88,7 +88,7 @@ Everything `PortableConfig` can express today.
 `filterIp`, `filterKnownScanners`, and `filterSuspiciousHeaders` compile to the dedicated matcher classes (so you get their diagnostics and CIDR handling); the remaining filters compile to a request-predicate closure.
 
 ::: warning
-`filterHeaderEquals`, `filterHeaderPresent`, and `filterHeaderRegex` are rejected on `safelist()` (and on `fromArray()` deserialize): a client-controlled header value would be a forgeable bypass token (anyone presenting it skips every downstream rule). They remain valid on blocklists, throttles, fail2ban, and track rules.
+`filterHeaderEquals`, `filterHeaderPresent`, and `filterHeaderRegex` are rejected on `safelist()` (and on `fromArray()` deserialize): a client-controlled header value would be a forgeable bypass token (anyone presenting it skips every downstream rule). They remain valid on blocklists, throttles, fail2ban, allow2ban, and track rules.
 :::
 
 ### Key extractors
