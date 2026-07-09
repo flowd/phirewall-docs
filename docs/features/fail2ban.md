@@ -10,7 +10,7 @@ Fail2Ban and Allow2Ban are Phirewall's automatic banning mechanisms. They monito
 
 A Fail2Ban **filter** marks a request as malicious by definition, so Fail2Ban **blocks every filter match with `403`** and counts it. When the count for a given key reaches the threshold within the observation period, the key is additionally banned for the ban duration.
 
-::: warning Behavioural change in 0.8
+::: warning Behavioral change in 0.8
 Before 0.8 a filter match below the threshold passed through, so a Fail2Ban filter acted as a slow counter. From 0.8 **every** match is blocked. A rule whose filter can match a legitimate request (for example counting every login POST) must move to [Allow2Ban with a filter](#allow2ban), which counts matches but lets them pass until the threshold. See [Migrating to 0.8](#migrating-to-0-8).
 :::
 
@@ -639,11 +639,11 @@ $config->throttles->add('global',
 
 ## Migrating to 0.8
 
-0.8 changes the Fail2Ban and Allow2Ban semantics. Two behavioural changes affect existing configs:
+0.8 changes the Fail2Ban and Allow2Ban semantics. Two behavioral changes affect existing configs:
 
 **Fail2Ban now blocks every filter match.** Previously a match below the threshold passed through, so a Fail2Ban filter acted as a slow counter. Now every match is blocked with `403`.
 
-- A Fail2Ban rule whose filter matches **only unambiguously malicious** traffic (scanner paths, WAF-flagged requests, invalid signatures) needs **no change** and now blocks the probe immediately, which is the intended behaviour.
+- A Fail2Ban rule whose filter matches **only unambiguously malicious** traffic (scanner paths, WAF-flagged requests, invalid signatures) needs **no change** and now blocks the probe immediately, which is the intended behavior.
 - A Fail2Ban rule whose filter can match a **legitimate** request (for example counting every login POST) must move to **Allow2Ban with a filter**, which counts matches but lets them pass until the threshold:
 
   ```php
@@ -659,6 +659,6 @@ $config->throttles->add('global',
   Note the parameter rename `ban:` to `banSeconds:`; the key still defaults to the client IP.
 - A **signal-only** rule (`filter: fn() => false` driven by `RequestContext::recordFailure()`) is **unaffected**: `recordFailure()` still only counts and may ban, never blocks the current request and never dispatches `Fail2BanMatched`. This is the recommended pattern for handler-verified login failures, and the one every shipped preset already uses, so presets need no change.
 
-**Allow2Ban gained an optional filter** (see [Filtered Counting](#filtered-counting)). Existing filterless Allow2Ban rules keep the exact previous behaviour (a hard volume cap counting every request), so no change is required.
+**Allow2Ban gained an optional filter** (see [Filtered Counting](#filtered-counting)). Existing filterless Allow2Ban rules keep the exact previous behavior (a hard volume cap counting every request), so no change is required.
 
 New in 0.8: the [`Fail2BanMatched`](#fail2banmatched) event and `DecisionPath::Fail2BanMatched` (diagnostics category `fail2ban_matched`). See [Observability](/advanced/observability).

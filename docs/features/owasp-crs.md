@@ -566,12 +566,24 @@ Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is s
 
 2. **Use unique rule IDs.** Each rule must have a unique `id`. Use the OWASP convention: 9xxxxx for attack categories (942xxx for SQLi, 941xxx for XSS, etc.).
 
-3. **Ban persistent attackers by volume.** An OWASP match is blocked at the blocklist layer (403) *before* Fail2Ban runs, so a Fail2Ban filter never sees it (and from 0.8 `filter: fn($req) => true` would block every request that reaches the layer). To also ban a client that keeps probing, add an Allow2Ban volume cap, or mirror the OWASP bans to your web server with an [infrastructure adapter](/advanced/infrastructure):
+3. **Ban clients that keep probing.** An OWASP match is blocked at the blocklist layer (403) *before* Fail2Ban and Allow2Ban run, so neither counts it: a client sending only CRS-matching payloads is blocked on every request but never accumulates a ban inside phirewall. To turn repeated CRS matches into a ban, mirror the blocklist hits to your web server with an [infrastructure adapter](/advanced/infrastructure) (`blockOnBlocklist: true`), so the probing IP is rejected at the edge on its next request:
 
     ```php
-    $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
-    // Ban clients that keep hitting after passing the OWASP layer.
-    $config->allow2ban->add('persistent-attacker',
+    use Flowd\Phirewall\Infrastructure\InfrastructureBanListener;
+
+    // Mirror every OWASP block to the web server, so a repeat offender is
+    // rejected before reaching PHP on subsequent requests.
+    $listener = new InfrastructureBanListener(
+        infrastructureBlocker: $adapter,
+        nonBlockingRunner: $runner,
+        blockOnBlocklist: true,
+    );
+    ```
+
+    An Allow2Ban volume cap is a separate, blunter guard: it counts the requests that *pass* the OWASP layer and bans a client that crosses a hard request ceiling, independent of any CRS match.
+
+    ```php
+    $config->allow2ban->add('volume-cap',
         threshold: 100, period: 60, banSeconds: 86400,
     );
     ```
