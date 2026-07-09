@@ -580,6 +580,8 @@ Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is s
     );
     ```
 
+    The listener only mirrors once it is registered with your PSR-14 event dispatcher; see the [infrastructure adapter](/advanced/infrastructure) page for the full wiring.
+
     An Allow2Ban volume cap is a separate, blunter guard: it counts the requests that *pass* the OWASP layer and bans a client that crosses a hard request ceiling, independent of any CRS match.
 
     ```php

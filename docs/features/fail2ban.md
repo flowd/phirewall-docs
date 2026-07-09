@@ -11,7 +11,7 @@ Fail2Ban and Allow2Ban are Phirewall's automatic banning mechanisms. They monito
 A Fail2Ban **filter** marks a request as malicious by definition, so Fail2Ban **blocks every filter match with `403`** and counts it. When the count for a given key reaches the threshold within the observation period, the key is additionally banned for the ban duration.
 
 ::: warning Behavioral change in 0.8
-Before 0.8 a filter match below the threshold passed through, so a Fail2Ban filter acted as a slow counter. From 0.8 **every** match is blocked. A rule whose filter can match a legitimate request (for example counting every login POST) must move to [Allow2Ban with a filter](#allow2ban), which counts matches but lets them pass until the threshold. See [Migrating to 0.8](#migrating-to-0-8).
+Before 0.8 a filter match below the threshold passed through, so a Fail2Ban filter acted as a slow counter. From 0.8 **every** match is blocked. A rule whose filter can match a legitimate request (for example counting every login POST) must move to [Allow2Ban with a filter](#allow2ban), which counts matches but lets them pass until the threshold. See [Migrating to 0.8](#migrating-to-08).
 :::
 
 ### How It Works
