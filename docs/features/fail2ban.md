@@ -369,7 +369,8 @@ $config->allow2ban->add(
     threshold: 30,
     period: 300,
     banSeconds: 3600,
-    key: fn($req): ?string => $req->getServerParams()['REMOTE_ADDR'] ?? null,
+    // No key: the rule bans the resolved client IP (proxy-aware). Passing a
+    // key that returns REMOTE_ADDR would bypass that resolver.
     filter: fn($req): bool => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
 );
@@ -422,14 +423,10 @@ $config->allow2ban->add(
     threshold: 20,
     period: 300,
     banSeconds: 1800,  // 30 minute ban
-    key: function ($req): ?string {
-        // Only count unauthenticated requests to API endpoints
-        if ($req->getHeaderLine('Authorization') === ''
-            && str_starts_with($req->getUri()->getPath(), '/api/')) {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null;
-    },
+    // Count only unauthenticated requests to API endpoints. No key: the rule
+    // bans the resolved client IP (proxy-aware).
+    filter: fn($req): bool => $req->getHeaderLine('Authorization') === ''
+        && str_starts_with($req->getUri()->getPath(), '/api/'),
 );
 ```
 
