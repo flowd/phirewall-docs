@@ -301,6 +301,10 @@ X-Phirewall-Owasp-Rule: 942100
 `X-Phirewall` and `X-Phirewall-Matched` require `enableResponseHeaders()`. The `X-Phirewall-Owasp-Rule` header is controlled independently by `enableOwaspDiagnosticsHeader()`.
 :::
 
+::: info
+`X-Phirewall-Matched` carries the name of the blocklist rule that matched. In the manual examples above that name is `owasp`; if you register the OWASP CRS through the preset engine, the rule is named `preset.owasp-crs.blocklist`, so that is the value you will see.
+:::
+
 ::: warning
 Disable the diagnostics header in production. It reveals which security rules are in place, which could help attackers craft evasion payloads.
 :::

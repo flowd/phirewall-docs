@@ -44,7 +44,7 @@ bin/badip-import --level=4
 
 - **The blocklist matches the resolved client IP** (the `Config`'s IP resolver, falling back to
   `REMOTE_ADDR` when none is set). Behind a proxy or CDN, set the resolver once with
-  `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))` so it sees the real
+  `$config->setIpResolver((new \Flowd\Phirewall\Http\TrustedProxyResolver([...]))->resolve(...))` so it sees the real
   client, not the proxy.
 - **A bundled snapshot goes stale** between refreshes, and a shared host or CGNAT address can be
   listed for one offender. Prefer a higher level, try `track()` first, and combine with your own

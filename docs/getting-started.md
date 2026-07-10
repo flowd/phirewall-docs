@@ -127,7 +127,7 @@ $config->safelists->addRule(new SafelistRule('trusted-bots', new TrustedBotMatch
 Blocklisted requests are immediately rejected with `403 Forbidden`.
 
 ```php
-// Block WordPress admin probes
+// Block admin-panel probes
 $config->blocklists->add('scanner-probe', fn($req) => str_starts_with($req->getUri()->getPath(), '/admin-panel'));
 
 // Block phpMyAdmin probes
