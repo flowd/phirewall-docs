@@ -974,6 +974,8 @@ Tiered per-client-IP rate limits for an API, with a tighter cap on an expensive 
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
@@ -995,16 +997,15 @@ $config->throttles->add('global',
     limit: 1000, period: 60,
 );
 
-// Expensive endpoint limit
-$config->throttles->add('search',
-    limit: 20, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getUri()->getPath() === '/api/search') {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+// Expensive endpoint limit. Null key defaults to the resolved client IP;
+// the scope restricts the throttle to the search endpoint.
+$config->throttles->addRule(new ThrottleRule(
+    'search',
+    limit: 20,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/api/search'),
+));
 ```
 
 ---
@@ -1082,6 +1083,8 @@ Complete login protection with throttling, Fail2Ban, and tracking.
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
@@ -1090,10 +1093,9 @@ $redis = new PredisClient(getenv('REDIS_URL') ?: 'redis://localhost:6379');
 $config = new Config(new RedisCache($redis));
 
 // Resolve the real client IP behind a proxy. Setting it on the Config makes
-// keyless rules proxy-aware; the scoped login throttles below reuse the same
-// resolver in their key closures instead of reading the raw REMOTE_ADDR peer.
-$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
-$config->setIpResolver($proxyResolver->resolve(...));
+// null-key rules proxy-aware, so the scoped login throttles below key on the
+// resolved client IP without touching the raw REMOTE_ADDR peer.
+$config->setIpResolver((new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']))->resolve(...));
 
 // Track all login attempts for dashboards
 $config->tracks->add('login-attempts',
@@ -1118,27 +1120,28 @@ $config->safelists->add('health',
     fn($req) => $req->getUri()->getPath() === '/health'
 );
 
-// Throttle login attempts: 10 per minute per client IP
-$config->throttles->add('login-rate',
-    limit: 10, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST') {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+// Throttle login attempts: 10 per minute per client IP. Null key defaults to
+// the resolved client IP; the scope restricts the throttle to login POSTs.
+$config->throttles->addRule(new ThrottleRule(
+    'login-rate',
+    limit: 10,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST'
+    ),
+));
 
 // Burst detection: 3 login attempts in 10 seconds
-$config->throttles->add('login-burst',
-    limit: 3, period: 10,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST') {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+$config->throttles->addRule(new ThrottleRule(
+    'login-burst',
+    limit: 3,
+    period: 10,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST'
+    ),
+));
 
 // Allow2Ban: ban after 5 login attempts in 5 minutes. Login POSTs are
 // legitimate, so they pass until the threshold (a Fail2Ban filter would
@@ -1440,7 +1443,9 @@ A production configuration combining safelists, blocklists, OWASP rules, bot det
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
@@ -1551,25 +1556,23 @@ $config->throttles->add('burst',
     limit: 50, period: 5,
 );
 
-$config->throttles->add('write-ops',
-    limit: 100, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if (in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+$config->throttles->addRule(new ThrottleRule(
+    'write-ops',
+    limit: 100,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+    ),
+));
 
-$config->throttles->add('login',
-    limit: 10, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getUri()->getPath() === '/login') {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+$config->throttles->addRule(new ThrottleRule(
+    'login',
+    limit: 10,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/login'),
+));
 
 // === CUSTOM RESPONSES ===
 $config->blocklistedResponseFactory = new ClosureBlocklistedResponseFactory(

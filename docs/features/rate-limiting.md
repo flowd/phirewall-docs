@@ -267,6 +267,8 @@ These snippets read `REMOTE_ADDR` directly to keep the closures short. In produc
 Define multiple throttle rules with different limits for different use cases. All rules are evaluated independently; a request must satisfy all of them.
 
 ```php
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 
 $proxyResolver = new TrustedProxyResolver([
@@ -281,27 +283,26 @@ $config->throttles->add('global-ip',
     limit: 1000, period: 60,
 );
 
-// Tier 2: Stricter limit for write operations
-$config->throttles->add('write-operations',
-    limit: 100, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if (in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+// Tier 2: Stricter limit for write operations. Null key defaults to the
+// resolved client IP; the scope restricts the throttle to mutating methods.
+$config->throttles->addRule(new ThrottleRule(
+    'write-operations',
+    limit: 100,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+    ),
+));
 
 // Tier 3: Per-endpoint limit for expensive operations
-$config->throttles->add('search-endpoint',
-    limit: 20, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getUri()->getPath() === '/api/search') {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+$config->throttles->addRule(new ThrottleRule(
+    'search-endpoint',
+    limit: 20,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/api/search'),
+));
 ```
 
 ## Per-User Limits

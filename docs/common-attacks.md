@@ -431,7 +431,9 @@ Combine all layers into a single production configuration:
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
@@ -490,11 +492,15 @@ $config->fail2ban->add('login-brute-force',
 
 // ── Layer 5: Throttling ───────────────────────────────────────────────
 $config->throttles->multi('api', [1 => 5, 60 => 200]);
-$config->throttles->add('login', limit: 10, period: 60, key: function ($req) use ($proxy): ?string {
-    return $req->getUri()->getPath() === '/login'
-        ? $proxy->resolve($req)
-        : null;
-});
+// Null key defaults to the resolved client IP (the resolver set above);
+// the scope filter restricts the throttle to the login path.
+$config->throttles->addRule(new ThrottleRule(
+    'login',
+    limit: 10,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/login'),
+));
 
 // ── Layer 6: Allow2Ban ────────────────────────────────────────────────
 $config->allow2ban->add('volume-ban',
