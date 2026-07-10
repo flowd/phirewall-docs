@@ -657,7 +657,7 @@ $config->throttles->add('global',
   ```
 
   Note the parameter rename `ban:` to `banSeconds:`; the key still defaults to the client IP.
-- A **signal-only** rule (`filter: fn() => false` driven by `RequestContext::recordFailure()`) is **unaffected**: `recordFailure()` still only counts and may ban, never blocks the current request and never dispatches `Fail2BanMatched`. This is the recommended pattern for handler-verified login failures, and the one every shipped preset already uses, so presets need no change.
+- A **signal-only** rule (`filter: fn() => false` driven by `RequestContext::recordFailure()`) is **unaffected**: `recordFailure()` still only counts and may ban, never blocks the current request and never dispatches `Fail2BanMatched`. This is the recommended pattern for handler-verified login failures. The shipped presets need no change either: the core presets use blocklists (not fail2ban), and the OWASP CRS fail2ban preset matches only unambiguously malicious traffic, which is meant to block on sight.
 
 **Allow2Ban gained an optional filter** (see [Filtered Counting](#filtered-counting)). Existing filterless Allow2Ban rules keep the exact previous behavior (a hard volume cap counting every request), so no change is required.
 

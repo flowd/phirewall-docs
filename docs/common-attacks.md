@@ -521,6 +521,6 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 
 5. **Tune for your application.** Every application has different traffic patterns. Monitor [diagnostics](/advanced/observability) and adjust thresholds based on real data.
 
-6. **Combine OWASP with fail2ban.** Use OWASP rules to detect attack payloads, and fail2ban to ban repeat offenders who trigger multiple rules.
+6. **Ban repeat OWASP offenders correctly.** An OWASP blocklist match is blocked (`403`) before fail2ban runs, so a separate fail2ban rule never sees it. To also ban a persistent attacker, use the OWASP CRS fail2ban preset (a fail2ban rule whose filter is the CRS matcher itself, so it blocks each match and bans repeat offenders) or mirror blocklist hits to the edge with an [infrastructure adapter](/advanced/infrastructure).
 
 7. **Keep rule IDs unique.** Follow the OWASP convention: `942xxx` for SQLi, `941xxx` for XSS, `933xxx` for RCE, `930xxx` for path traversal.
