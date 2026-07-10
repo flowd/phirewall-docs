@@ -99,6 +99,8 @@ Set a generous enough threshold so users who mistype their password are not bann
 Credential stuffing uses stolen username/password lists from data breaches. Defend against it by combining Allow2Ban (to ban IPs that make many login attempts, letting real attempts through until the threshold) with user-based throttling:
 
 ```php
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 
 // Per-IP: count login attempts (POST /login) and ban after 30 in 10 minutes.
 // Attempts pass until the threshold, so a user who mistypes their password a
@@ -127,17 +129,17 @@ $config->throttles->add('credential-stuffing-user',
     }
 );
 
-// Burst detection: 3 login attempts in 10 seconds = suspicious
-$config->throttles->add('login-burst',
+// Burst detection: 3 login attempts in 10 seconds = suspicious. A null key
+// defaults to the resolved client IP; the scope restricts it to login POSTs.
+$config->throttles->addRule(new ThrottleRule(
+    'login-burst',
     limit: 3,
     period: 10,
-    key: function ($req): ?string {
-        if ($req->getMethod() === 'POST' && $req->getUri()->getPath() === '/login') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null;
-    }
-);
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => $req->getMethod() === 'POST' && $req->getUri()->getPath() === '/login'
+    ),
+));
 ```
 
 This three-layer strategy defends against different attack speeds:
@@ -157,7 +159,8 @@ $config->fail2ban->add('api-abuse',
     ban: 900,          // 15 minute ban
     filter: fn($req) => $req->getAttribute('apiSignatureValid') === false,
     // Key on the verified client id (an internal identifier, not the raw API
-    // secret), falling back to the client IP when the request is unauthenticated.
+    // secret), falling back to the raw peer address when the request is
+    // unauthenticated.
     key: fn($req): ?string =>
         $req->getAttribute('apiClientId') ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null),
 );

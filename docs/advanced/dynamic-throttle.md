@@ -231,6 +231,11 @@ $config->throttles->add('api',
 Create separate rules and use the key closure returning `null` to skip:
 
 ```php
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+
+// Resolve the real client IP behind a proxy for the anonymous fallback below.
+$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
 // Free tier: 100 requests/minute
 $config->throttles->add('free-tier',
     limit: 100, period: 60,
@@ -249,12 +254,12 @@ $config->throttles->add('pro-tier',
     },
 );
 
-// Anonymous fallback: 50 requests/minute per IP
+// Anonymous fallback: 50 requests/minute per client IP
 $config->throttles->add('anonymous',
     limit: 50, period: 60,
-    key: function ($request): ?string {
+    key: function ($request) use ($proxyResolver): ?string {
         if ($request->getAttribute('userId') !== null) return null;
-        return $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        return $proxyResolver->resolve($request);
     },
 );
 ```
@@ -268,31 +273,35 @@ $config->throttles->add('anonymous',
 Assign different limits to endpoints based on their resource cost:
 
 ```php
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+
+// Resolve the real client IP behind a proxy for the per-IP keys below.
+$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
 // Cheap read operations: 1000 req/min
 $config->throttles->add('read-operations',
     limit: 1000, period: 60,
-    key: function ($request): ?string {
+    key: function ($request) use ($proxyResolver): ?string {
         if ($request->getMethod() !== 'GET') return null;
-        return $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        return $proxyResolver->resolve($request);
     },
 );
 
 // Moderate write operations: 100 req/min
 $config->throttles->add('write-operations',
     limit: 100, period: 60,
-    key: function ($request): ?string {
+    key: function ($request) use ($proxyResolver): ?string {
         if (!in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) return null;
-        return $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        return $proxyResolver->resolve($request);
     },
 );
 
 // Expensive export endpoints: 10 req/hour
 $config->throttles->add('export-endpoints',
     limit: 10, period: 3600,
-    key: function ($request): ?string {
+    key: function ($request) use ($proxyResolver): ?string {
         if (!str_starts_with($request->getUri()->getPath(), '/api/export')) return null;
-        return $request->getAttribute('userId')
-            ?? ($request->getServerParams()['REMOTE_ADDR'] ?? null);
+        return $request->getAttribute('userId') ?? $proxyResolver->resolve($request);
     },
 );
 ```
@@ -302,12 +311,17 @@ $config->throttles->add('export-endpoints',
 Skip rate limiting for certain scenarios by returning `null` from the key closure:
 
 ```php
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+
+$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
 $config->throttles->add('api-limit',
     limit: 100, period: 60,
-    key: function ($request): ?string {
-        // Skip for internal services
-        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? '';
-        if (str_starts_with($ip, '10.')) return null;
+    key: function ($request) use ($proxyResolver): ?string {
+        // Skip requests reaching us directly from the internal network
+        // (checked against the raw peer, not the resolved client).
+        $peer = $request->getServerParams()['REMOTE_ADDR'] ?? '';
+        if (str_starts_with($peer, '10.')) return null;
 
         // Skip for admin users
         if ($request->getAttribute('role') === 'admin') return null;
@@ -315,7 +329,8 @@ $config->throttles->add('api-limit',
         // Skip for webhooks
         if (str_starts_with($request->getUri()->getPath(), '/webhooks/')) return null;
 
-        return $ip;
+        // Key external clients on their resolved IP (proxy-aware).
+        return $proxyResolver->resolve($request);
     },
 );
 ```

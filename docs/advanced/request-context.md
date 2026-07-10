@@ -139,23 +139,17 @@ $config->allow2ban->add(
 
 An older idiom achieves the same by having the rule's `keyExtractor` return `null` pre-handler (`key: fn($request): ?string => null`); the firewall then skips counting until the handler signals an explicit key. The `filter: fn() => false` form above is clearer and is the recommended signal-only pattern.
 
-In the handler:
+In the handler, record the hit. Omit the key so the rule reuses its own key extractor (the resolved client IP by default) for this request, exactly as `recordFailure()` does:
 
 ```php
 $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 
 if ($context !== null && $this->operationWasExpensive($request)) {
-    $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-    $context->recordHit('expensive-endpoint', $ip);
+    $context->recordHit('expensive-endpoint');
 }
 ```
 
-If the rule's `keyExtractor` returns a value pre-handler (the common case), the second argument to `recordHit()` can be omitted; the firewall derives the key the same way it does for `recordFailure()`:
-
-```php
-// Omitting $key reuses the rule's own key extractor on this request.
-$context?->recordHit('expensive-endpoint');
-```
+Pass an explicit second argument only to bucket the count on something other than the rule's default key.
 
 When the rule's `keyExtractor` returns a value pre-handler, **both** the pre-handler counter and the handler's `recordHit()` increment the counter, so the threshold should account for the doubled count.
 

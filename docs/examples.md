@@ -1082,11 +1082,18 @@ Complete login protection with throttling, Fail2Ban, and tracking.
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
 
 $redis = new PredisClient(getenv('REDIS_URL') ?: 'redis://localhost:6379');
 $config = new Config(new RedisCache($redis));
+
+// Resolve the real client IP behind a proxy. Setting it on the Config makes
+// keyless rules proxy-aware; the scoped login throttles below reuse the same
+// resolver in their key closures instead of reading the raw REMOTE_ADDR peer.
+$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+$config->setIpResolver($proxyResolver->resolve(...));
 
 // Track all login attempts for dashboards
 $config->tracks->add('login-attempts',
@@ -1111,12 +1118,12 @@ $config->safelists->add('health',
     fn($req) => $req->getUri()->getPath() === '/health'
 );
 
-// Throttle login attempts: 10 per minute per IP
+// Throttle login attempts: 10 per minute per client IP
 $config->throttles->add('login-rate',
     limit: 10, period: 60,
-    key: function ($req): ?string {
+    key: function ($req) use ($proxyResolver): ?string {
         if ($req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
+            return $proxyResolver->resolve($req);
         }
         return null;
     }
@@ -1125,9 +1132,9 @@ $config->throttles->add('login-rate',
 // Burst detection: 3 login attempts in 10 seconds
 $config->throttles->add('login-burst',
     limit: 3, period: 10,
-    key: function ($req): ?string {
+    key: function ($req) use ($proxyResolver): ?string {
         if ($req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
+            return $proxyResolver->resolve($req);
         }
         return null;
     }
@@ -1682,6 +1689,9 @@ $dispatcher = new class ($logger) implements EventDispatcherInterface {
         if (property_exists($event, 'key')) $context['key'] = $event->key;
         if (property_exists($event, 'serverRequest')) {
             $req = $event->serverRequest;
+            // Raw peer address (the proxy IP behind a load balancer). For the
+            // resolved client IP, log $event->key (keyless rules key on it) or
+            // resolve it here with your TrustedProxyResolver.
             $context['ip'] = $req->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
             $context['path'] = $req->getUri()->getPath();
         }

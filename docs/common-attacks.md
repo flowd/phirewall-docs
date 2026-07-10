@@ -45,16 +45,20 @@ Only genuine failures are counted, so a user who logs in correctly on the first 
 Add a rate limit specifically on the login path to slow down attackers:
 
 ```php
-$config->throttles->add('login-throttle',
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
+
+// A null key defaults to the resolved client IP (proxy-aware via the Config's
+// IP resolver); the scope filter restricts the throttle to the login path.
+$config->throttles->addRule(new ThrottleRule(
+    'login-throttle',
     limit: 10,
     period: 60,
-    key: function (ServerRequestInterface $req): ?string {
-        if ($req->getUri()->getPath() === '/login') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null; // Skip for other endpoints
-    },
-);
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn(ServerRequestInterface $req): bool => $req->getUri()->getPath() === '/login'
+    ),
+));
 ```
 
 ### Credential Stuffing (Per-Username)
@@ -314,6 +318,10 @@ $config->throttles->sliding('api',
 Apply different limits based on subscription tier:
 
 ```php
+// Anonymous callers fall back to their client IP; resolve it through the
+// trusted-proxy resolver instead of the raw REMOTE_ADDR peer address.
+$proxy = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
 $config->throttles->add('api',
     limit: fn(ServerRequestInterface $req): int => match ($req->getAttribute('plan')) {
         'enterprise' => 10000,
@@ -322,8 +330,8 @@ $config->throttles->add('api',
         default => 50,
     },
     period: 60,
-    key: fn($req): ?string =>
-        $req->getAttribute('userId') ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null),
+    key: fn(ServerRequestInterface $req): ?string =>
+        $req->getAttribute('userId') ?? $proxy->resolve($req),
 );
 ```
 
@@ -336,15 +344,21 @@ $config->throttles->add('api',
 Apply stricter limits to mutating operations:
 
 ```php
-$config->throttles->add('write-ops',
-    limit: 50, period: 60,
-    key: function (ServerRequestInterface $req): ?string {
-        if (in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null;
-    },
-);
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
+
+// A null key defaults to the resolved client IP; the scope filter restricts the
+// throttle to mutating methods.
+$config->throttles->addRule(new ThrottleRule(
+    'write-ops',
+    limit: 50,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn(ServerRequestInterface $req): bool =>
+            in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+    ),
+));
 ```
 
 ### Allow2Ban for High-Volume Abuse
@@ -381,13 +395,16 @@ A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, 
 Apply stricter limits to resource-intensive endpoints:
 
 ```php
+// Anonymous callers fall back to their client IP; resolve it through the
+// trusted-proxy resolver instead of the raw REMOTE_ADDR peer address.
+$proxy = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
 $config->throttles->add('export',
     limit: 10,
     period: 3600,
-    key: function (ServerRequestInterface $req): ?string {
+    key: function (ServerRequestInterface $req) use ($proxy): ?string {
         if (str_starts_with($req->getUri()->getPath(), '/api/export')) {
-            return $req->getAttribute('userId')
-                ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null);
+            return $req->getAttribute('userId') ?? $proxy->resolve($req);
         }
         return null;
     },
@@ -473,9 +490,9 @@ $config->fail2ban->add('login-brute-force',
 
 // ── Layer 5: Throttling ───────────────────────────────────────────────
 $config->throttles->multi('api', [1 => 5, 60 => 200]);
-$config->throttles->add('login', limit: 10, period: 60, key: function ($req): ?string {
+$config->throttles->add('login', limit: 10, period: 60, key: function ($req) use ($proxy): ?string {
     return $req->getUri()->getPath() === '/login'
-        ? ($req->getServerParams()['REMOTE_ADDR'] ?? null)
+        ? $proxy->resolve($req)
         : null;
 });
 

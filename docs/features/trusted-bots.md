@@ -57,7 +57,17 @@ A `null` key skips the rule, so the limit applies exclusively to real, DNS-verif
 and never touches ordinary visitors:
 
 ```php
-$trustedBots = new TrustedBotMatcher(cache: $cache);
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+
+// Pass the IP resolver explicitly: standalone match() falls back to the
+// REMOTE_ADDR peer, which behind a proxy is the proxy and never verifies a
+// crawler. Reuse the resolver you registered via setIpResolver().
+$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
+$trustedBots = new TrustedBotMatcher(
+    cache: $cache,
+    ipResolver: $proxyResolver->resolve(...),
+);
 
 $config->throttles->add(
     'trusted-bot-rate',
@@ -67,6 +77,11 @@ $config->throttles->add(
         $trustedBots->match($request)->isMatch() ? 'trusted-bot' : null,
 );
 ```
+
+Calling `match()` on a matcher you hold yourself does **not** autowire the Config's IP resolver;
+only `TrustedBotMatcher` instances registered as safelist or blocklist rules receive it during
+evaluation. For a standalone `match()` in a throttle key closure, pass `ipResolver:` explicitly
+(as above) so rDNS verification runs against the real client IP behind a proxy.
 
 `match()` returns a `MatchResult`; check it with `->isMatch()`. The key you return decides how
 the limit is bucketed:

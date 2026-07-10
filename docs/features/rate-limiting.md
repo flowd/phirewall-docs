@@ -137,12 +137,17 @@ $config->throttles->multi('public-api', [
     3600 => 5000,  // 5000 req/hour daily budget
 ]);
 
-// Login endpoint with tight controls
+// Login endpoint with tight controls. multi() shares one key closure across
+// its windows and has to scope by path, so resolve the client IP in the
+// closure (the same TrustedProxyResolver you pass to setIpResolver) instead of
+// reading the raw REMOTE_ADDR peer address, which collapses onto the proxy.
+$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
 $config->throttles->multi('login', [
     60  => 5,      // 5 attempts/min
     3600 => 20,    // 20 attempts/hour
 ], fn($req) => $req->getUri()->getPath() === '/login'
-    ? ($req->getServerParams()['REMOTE_ADDR'] ?? null)
+    ? $proxyResolver->resolve($req)
     : null
 );
 ```
@@ -183,14 +188,13 @@ $config->throttles->add(
 ### Per-Role Rate Limits
 
 ```php
-// Admins get 100 req/min, regular users get 5 req/min
+// Admins get 100 req/min, regular users get 5 req/min.
+// No key argument: the rule keys on the resolved client IP by default.
 $config->throttles->add(
     'role-based',
     fn(ServerRequestInterface $req): int =>
         $req->getAttribute('role') === 'admin' ? 100 : 5,
     60,
-    fn(ServerRequestInterface $req): string =>
-        $req->getServerParams()['REMOTE_ADDR'] ?? '127.0.0.1'
 );
 ```
 
@@ -253,6 +257,10 @@ $config->throttles->add('per-endpoint', limit: 50, period: 60,
     }
 );
 ```
+
+::: tip
+These snippets read `REMOTE_ADDR` directly to keep the closures short. In production behind a proxy, derive the IP part from your `TrustedProxyResolver` (`$proxyResolver->resolve($req)`) so it is the real client IP, not the proxy peer address.
+:::
 
 ## Tiered Rate Limits
 
