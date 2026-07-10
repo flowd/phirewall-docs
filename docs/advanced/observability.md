@@ -31,11 +31,11 @@ All events are dispatched **synchronously** during request processing. Every eve
 |-------|-----------------|----------------|
 | `SafelistMatched` | Request matches a safelist rule | `rule`, `serverRequest` |
 | `BlocklistMatched` | Request matches a blocklist rule | `rule`, `serverRequest` |
-| `ThrottleExceeded` | Request exceeds a throttle limit | `rule`, `key`, `limit`, `period`, `count`, `retryAfter` |
-| `Fail2BanMatched` | Fail2Ban filter matches and blocks a request below the ban threshold | `rule`, `key`, `threshold`, `period`, `count` |
-| `Fail2BanBanned` | Key banned after reaching the failure threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count` |
-| `Allow2BanBanned` | Key banned after exceeding request threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count` |
-| `TrackHit` | Tracking rule filter matches | `rule`, `key`, `period`, `count`, `limit`, `thresholdReached` |
+| `ThrottleExceeded` | Request exceeds a throttle limit | `rule`, `key`, `limit`, `period`, `count`, `retryAfter`, `serverRequest` |
+| `Fail2BanMatched` | Fail2Ban filter matches and blocks a request below the ban threshold | `rule`, `key`, `threshold`, `period`, `count`, `serverRequest` |
+| `Fail2BanBanned` | Key banned after reaching the failure threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `Allow2BanBanned` | Key banned after exceeding request threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `TrackHit` | Tracking rule filter matches | `rule`, `key`, `period`, `count`, `limit`, `thresholdReached`, `serverRequest` |
 | `FirewallError` | Error in fail-open mode (cache failure, etc.) | `exception`, `serverRequest` |
 | `PerformanceMeasured` | After every firewall decision | `decisionPath`, `durationMicros`, `ruleName` |
 

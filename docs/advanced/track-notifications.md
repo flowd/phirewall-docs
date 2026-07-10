@@ -176,13 +176,13 @@ Phirewall dispatches events for every significant decision. You can listen for a
 
 | Event Class | When It Fires | Key Properties |
 |-------------|---------------|----------------|
-| `TrackHit` | A track rule matches a request | `rule`, `key`, `count`, `period`, `limit`, `thresholdReached` |
+| `TrackHit` | A track rule matches a request | `rule`, `key`, `count`, `period`, `limit`, `thresholdReached`, `serverRequest` |
 | `SafelistMatched` | A request matches a safelist rule | `rule`, `serverRequest` |
 | `BlocklistMatched` | A request matches a blocklist rule | `rule`, `serverRequest` |
-| `ThrottleExceeded` | A rate limit is exceeded | `rule`, `key`, `limit`, `period`, `count`, `retryAfter` |
-| `Fail2BanMatched` | A Fail2Ban filter match is blocked below the threshold | `rule`, `key`, `threshold`, `period`, `count` |
-| `Fail2BanBanned` | A client is banned by Fail2Ban | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count` |
-| `Allow2BanBanned` | A client is banned by Allow2Ban | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count` |
+| `ThrottleExceeded` | A rate limit is exceeded | `rule`, `key`, `limit`, `period`, `count`, `retryAfter`, `serverRequest` |
+| `Fail2BanMatched` | A Fail2Ban filter match is blocked below the threshold | `rule`, `key`, `threshold`, `period`, `count`, `serverRequest` |
+| `Fail2BanBanned` | A client is banned by Fail2Ban | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `Allow2BanBanned` | A client is banned by Allow2Ban | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
 | `PerformanceMeasured` | Every firewall decision (for metrics) | `decisionPath`, `durationMicros`, `ruleName` |
 | `FirewallError` | An exception occurs in fail-open mode | `exception`, `serverRequest` |
 
