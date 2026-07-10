@@ -223,7 +223,6 @@ $config->throttles->add('api',
         default => 50,
     },
     period: 60,
-    key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
 
@@ -343,7 +342,6 @@ $config->throttles->add('db-tiered',
             default => 50,
         },
     period: 60,
-    key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
 

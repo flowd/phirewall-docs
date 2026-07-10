@@ -120,7 +120,6 @@ This is useful for alerting: you get full observability of all traffic, but can 
 $config->tracks->add('suspicious-login-burst',
     period: 60,
     filter: fn($request) => $request->getUri()->getPath() === '/login',
-    key: fn($request) => $request->getServerParams()['REMOTE_ADDR'] ?? '0.0.0.0',
     limit: 5,
 );
 ```
