@@ -369,7 +369,7 @@ $config->allow2ban->add(
     threshold: 30,
     period: 300,
     banSeconds: 3600,
-    key: fn($req): string => $req->getServerParams()['REMOTE_ADDR'] ?? '',
+    key: fn($req): ?string => $req->getServerParams()['REMOTE_ADDR'] ?? null,
     filter: fn($req): bool => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
 );

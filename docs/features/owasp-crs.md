@@ -566,7 +566,7 @@ Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is s
 
 2. **Use unique rule IDs.** Each rule must have a unique `id`. Use the OWASP convention: 9xxxxx for attack categories (942xxx for SQLi, 941xxx for XSS, etc.).
 
-3. **Ban clients that keep probing.** An OWASP match is blocked at the blocklist layer (403) *before* Fail2Ban and Allow2Ban run, so neither counts it: a client sending only CRS-matching payloads is blocked on every request but never accumulates a ban inside phirewall. To turn repeated CRS matches into a ban, mirror the blocklist hits to your web server with an [infrastructure adapter](/advanced/infrastructure) (`blockOnBlocklist: true`), so the probing IP is rejected at the edge on its next request:
+3. **Ban clients that keep probing.** When CRS is registered as a **blocklist** rule (the Quick Start above), an OWASP match is blocked (403) *before* Fail2Ban and Allow2Ban run, so neither counts it: a client sending only CRS-matching payloads is blocked on every request but never accumulates a ban inside phirewall. (The **CRS fail2ban preset** is different: there the CRS match *is* the Fail2Ban filter, so it counts toward a ban directly - use it if you want repeat offenders banned without extra wiring.) To turn repeated CRS matches into a ban while keeping CRS as a blocklist, mirror the blocklist hits to your web server with an [infrastructure adapter](/advanced/infrastructure) (`blockOnBlocklist: true`), so the probing IP is rejected at the edge on its next request:
 
     ```php
     use Flowd\Phirewall\Infrastructure\InfrastructureBanListener;
