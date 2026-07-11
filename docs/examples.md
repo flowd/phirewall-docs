@@ -1529,7 +1529,7 @@ $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($
 $config->fail2ban->add('scanner-probe',
     threshold: 10, period: 60, ban: 86400,
     filter: fn($req) => (bool) preg_match(
-        '#^/(\.env|\.git|\.aws/credentials|\.htpasswd)#i',
+        '#^/(\.env|\.git(?:/|$)|\.aws/credentials|\.htpasswd)#i',
         $req->getUri()->getPath(),
     ),
 );

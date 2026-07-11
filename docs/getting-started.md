@@ -184,7 +184,7 @@ $config->fail2ban->add('scanner-probe',
     period: 60,
     ban: 86400,
     filter: fn($req) => (bool) preg_match(
-        '#^/(\.env|\.git|\.aws/credentials)#i',
+        '#^/(\.env|\.git(?:/|$)|\.aws/credentials)#i',
         $req->getUri()->getPath(),
     ),
 );

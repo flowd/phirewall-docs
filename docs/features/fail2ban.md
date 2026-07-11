@@ -177,7 +177,7 @@ $config->fail2ban->add('persistent-scanner',
     period: 60,        // in 1 minute
     ban: 86400,        // 24 hour ban
     filter: fn($req) => (bool) preg_match(
-        '#^/(\.env|\.git|\.aws/credentials|\.htpasswd)#i',
+        '#^/(\.env|\.git(?:/|$)|\.aws/credentials|\.htpasswd)#i',
         $req->getUri()->getPath(),
     ),
 );
@@ -595,7 +595,7 @@ $config->blocklists->knownScanners();
 $config->fail2ban->add('scanner-probe',
     threshold: 5, period: 60, ban: 86400,
     filter: fn($req) => (bool) preg_match(
-        '#^/(\.env|\.git|\.aws/credentials)#i',
+        '#^/(\.env|\.git(?:/|$)|\.aws/credentials)#i',
         $req->getUri()->getPath(),
     ),
 );

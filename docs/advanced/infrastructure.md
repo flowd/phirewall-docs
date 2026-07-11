@@ -424,7 +424,7 @@ $config = new Config($cache, $dispatcher);
 $config->fail2ban->add('scanner-probe',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($req) => (bool) preg_match(
-        '#^/(\.env|\.git|\.aws/credentials|\.htpasswd)#i',
+        '#^/(\.env|\.git(?:/|$)|\.aws/credentials|\.htpasswd)#i',
         $req->getUri()->getPath(),
     ),
 );
