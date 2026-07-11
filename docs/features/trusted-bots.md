@@ -61,7 +61,8 @@ use Flowd\Phirewall\Http\TrustedProxyResolver;
 
 // Pass the IP resolver explicitly: standalone match() falls back to the
 // REMOTE_ADDR peer, which behind a proxy is the proxy and never verifies a
-// crawler. Reuse the resolver you registered via setIpResolver().
+// crawler. Build it from the same trusted-proxy CIDRs you registered via
+// setIpResolver() (or reuse that resolver instance if you have it to hand).
 $proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
 
 $trustedBots = new TrustedBotMatcher(

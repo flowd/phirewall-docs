@@ -637,7 +637,7 @@ $config->throttles->add('global',
 
 8. **Choose the right mechanism.** Use Fail2Ban to block and ban unambiguously malicious matches on the spot (or as a signal-only rule driven by `RequestContext`). Use Allow2Ban when the counted requests are themselves legitimate and should pass until the threshold (login brute-force counting, blanket volume limits).
 
-## Migrating to 0.8
+## Migrating to 0.8 {#migrating-to-08}
 
 0.8 changes the Fail2Ban and Allow2Ban semantics. Two behavioral changes affect existing configs:
 
