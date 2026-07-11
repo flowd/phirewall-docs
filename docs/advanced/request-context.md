@@ -151,7 +151,7 @@ if ($context !== null && $this->operationWasExpensive($request)) {
 
 Pass an explicit second argument only to bucket the count on something other than the rule's default key.
 
-When the rule's `keyExtractor` returns a value pre-handler, **both** the pre-handler counter and the handler's `recordHit()` increment the counter, so the threshold should account for the doubled count.
+When the rule already counts pre-handler (it has no filter, or a filter that matches this request) and its `keyExtractor` returns a value, **both** the pre-handler counter and the handler's `recordHit()` increment the counter, so the threshold should account for the doubled count. With the signal-only `filter` shown above the pre-handler path never counts, so no doubling occurs.
 
 Recorded failures and hits are processed together after your handler returns; retrieve them all with `getRecordedSignals()`.
 
