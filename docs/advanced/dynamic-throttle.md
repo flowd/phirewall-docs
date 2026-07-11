@@ -223,7 +223,6 @@ $config->throttles->add('api',
         default => 50,
     },
     period: 60,
-    key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
 
@@ -232,6 +231,13 @@ $config->throttles->add('api',
 Create separate rules and use the key closure returning `null` to skip:
 
 ```php
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+
+// Make null-key rules proxy-aware (used by the anonymous fallback below).
+$config->setIpResolver((new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']))->resolve(...));
+
 // Free tier: 100 requests/minute
 $config->throttles->add('free-tier',
     limit: 100, period: 60,
@@ -250,14 +256,15 @@ $config->throttles->add('pro-tier',
     },
 );
 
-// Anonymous fallback: 50 requests/minute per IP
-$config->throttles->add('anonymous',
-    limit: 50, period: 60,
-    key: function ($request): ?string {
-        if ($request->getAttribute('userId') !== null) return null;
-        return $request->getServerParams()['REMOTE_ADDR'] ?? null;
-    },
-);
+// Anonymous fallback: 50 requests/minute per client IP (requests without a userId).
+// Null key defaults to the resolved client IP; the scope selects anonymous requests.
+$config->throttles->addRule(new ThrottleRule(
+    'anonymous',
+    limit: 50,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($request): bool => $request->getAttribute('userId') === null),
+));
 ```
 
 ::: tip Read tier and identity from request attributes, not headers
@@ -269,56 +276,76 @@ $config->throttles->add('anonymous',
 Assign different limits to endpoints based on their resource cost:
 
 ```php
-// Cheap read operations: 1000 req/min
-$config->throttles->add('read-operations',
-    limit: 1000, period: 60,
-    key: function ($request): ?string {
-        if ($request->getMethod() !== 'GET') return null;
-        return $request->getServerParams()['REMOTE_ADDR'] ?? null;
-    },
-);
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+
+// Resolve the real client IP behind a proxy. Setting it on the Config makes the
+// null-key rules below proxy-aware; the userId-keyed export rule reuses the same
+// resolver for its IP fallback.
+$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+$config->setIpResolver($proxyResolver->resolve(...));
+
+// Cheap read operations: 1000 req/min (GET requests, keyed on the client IP)
+$config->throttles->addRule(new ThrottleRule(
+    'read-operations',
+    limit: 1000,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($request): bool => $request->getMethod() === 'GET'),
+));
 
 // Moderate write operations: 100 req/min
-$config->throttles->add('write-operations',
-    limit: 100, period: 60,
-    key: function ($request): ?string {
-        if (!in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) return null;
-        return $request->getServerParams()['REMOTE_ADDR'] ?? null;
-    },
-);
+$config->throttles->addRule(new ThrottleRule(
+    'write-operations',
+    limit: 100,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($request): bool => in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+    ),
+));
 
-// Expensive export endpoints: 10 req/hour
+// Expensive export endpoints: 10 req/hour, keyed per user with a client-IP fallback
 $config->throttles->add('export-endpoints',
     limit: 10, period: 3600,
-    key: function ($request): ?string {
+    key: function ($request) use ($proxyResolver): ?string {
         if (!str_starts_with($request->getUri()->getPath(), '/api/export')) return null;
-        return $request->getAttribute('userId')
-            ?? ($request->getServerParams()['REMOTE_ADDR'] ?? null);
+        return $request->getAttribute('userId') ?? $proxyResolver->resolve($request);
     },
 );
 ```
 
 ## Conditional Bypass
 
-Skip rate limiting for certain scenarios by returning `null` from the key closure:
+Skip rate limiting for certain scenarios with a scope filter; the rule is skipped for any request the filter does not match. The key stays `null`, so matched requests are counted against the resolved client IP:
 
 ```php
-$config->throttles->add('api-limit',
-    limit: 100, period: 60,
-    key: function ($request): ?string {
-        // Skip for internal services
-        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? '';
-        if (str_starts_with($ip, '10.')) return null;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
+use Flowd\Phirewall\Http\TrustedProxyResolver;
 
-        // Skip for admin users
-        if ($request->getAttribute('role') === 'admin') return null;
+// Make the null-key rule proxy-aware.
+$config->setIpResolver((new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']))->resolve(...));
 
-        // Skip for webhooks
-        if (str_starts_with($request->getUri()->getPath(), '/webhooks/')) return null;
+$config->throttles->addRule(new ThrottleRule(
+    'api-limit',
+    limit: 100,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(function ($request): bool {
+        // Skip requests reaching us directly from the internal network
+        // (checked against the raw peer, not the resolved client).
+        $peer = $request->getServerParams()['REMOTE_ADDR'] ?? '';
+        if (str_starts_with($peer, '10.')) return false;
 
-        return $ip;
-    },
-);
+        // Skip admins and webhooks.
+        if ($request->getAttribute('role') === 'admin') return false;
+        if (str_starts_with($request->getUri()->getPath(), '/webhooks/')) return false;
+
+        return true;
+    }),
+));
 ```
 
 ::: tip
@@ -343,7 +370,6 @@ $config->throttles->add('db-tiered',
             default => 50,
         },
     period: 60,
-    key: fn($request): ?string => $request->getServerParams()['REMOTE_ADDR'] ?? null,
 );
 ```
 

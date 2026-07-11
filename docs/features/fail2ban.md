@@ -8,7 +8,11 @@ Fail2Ban and Allow2Ban are Phirewall's automatic banning mechanisms. They monito
 
 ## Fail2Ban
 
-Fail2Ban counts requests that match a **filter** condition. When the count for a given key reaches the threshold within the observation period, the key is banned.
+A Fail2Ban **filter** marks a request as malicious by definition, so Fail2Ban **blocks every filter match with `403`** and counts it. When the count for a given key reaches the threshold within the observation period, the key is additionally banned for the ban duration.
+
+::: warning Behavioral change in 0.8
+Before 0.8 a filter match below the threshold passed through, so a Fail2Ban filter acted as a slow counter. From 0.8 **every** match is blocked. A rule whose filter can match a legitimate request (for example counting every login POST) must move to [Allow2Ban with a filter](#allow2ban), which counts matches but lets them pass until the threshold. See [Migrating to 0.8](#migrating-to-08).
+:::
 
 ### How It Works
 
@@ -23,21 +27,22 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
                     Yes
                     |
                     v
-            Increment failure counter
+            Increment failure counter, then block (403)
                     |
                     v
-            Counter >= threshold? --> No --> Continue to throttle rules
+            Counter >= threshold? --> No  --> 403 (Fail2BanMatched event)
                     |
                     Yes
                     |
                     v
-            BAN key for configured duration --> 403 Forbidden
+            BAN key for configured duration --> 403 (Fail2BanBanned event)
 ```
 
-1. A **filter** closure checks each incoming request for a condition (e.g., a POST to `/login`)
-2. Matches are counted per **key** (e.g., IP address) within a time **period**
-3. When the count **reaches** the **threshold**, the key is **banned** for a configurable duration (e.g., `threshold: 5` bans on the 5th matching request; the same request that brings the counter to 5 is itself blocked)
-4. Banned keys receive `403 Forbidden` immediately, without further rule evaluation
+1. A **filter** closure checks each incoming request for a condition (e.g., a request to a scanner path)
+2. Every match is **blocked with `403`** and counted per **key** (e.g., IP address) within a time **period**
+3. A match **below** the threshold blocks via `DecisionPath::Fail2BanMatched` and dispatches the [`Fail2BanMatched`](#fail2banmatched) event
+4. When the count **reaches** the **threshold**, the key is additionally **banned** for the configured duration; that match blocks via `DecisionPath::Fail2BanBanned` and dispatches [`Fail2BanBanned`](#fail2banbanned) (never both events)
+5. Banned keys then receive `403 Forbidden` immediately, without further rule evaluation
 
 ### Configuration
 
@@ -55,10 +60,10 @@ $config->fail2ban->add(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier |
-| `$threshold` | `int` | Number of filter matches that triggers the ban (must be >= 1). The Nth matching request is itself banned (matching rack-attack `maxretry` semantics). |
+| `$threshold` | `int` | Number of filter matches that triggers the ban (must be >= 1). Every match is blocked; the Nth match additionally bans the key. |
 | `$period` | `int` | Time window for counting matches in seconds (must be >= 1) |
 | `$ban` | `int` | Ban duration in seconds (must be >= 1) |
-| `$filter` | `Closure` | `fn(ServerRequestInterface): bool`, return `true` to count as a match |
+| `$filter` | `Closure` | `fn(ServerRequestInterface): bool`, return `true` to block and count the request as a match |
 | `$key` | `?Closure` | `fn(ServerRequestInterface): ?string`, return key to track, or `null` to skip. When the whole argument is omitted, defaults to the client IP from the Config's IP resolver (`Config::setIpResolver()`), falling back to REMOTE_ADDR. Configure proxy trust once with `$config->setIpResolver((new TrustedProxyResolver([...]))->resolve(...))` and all keyless rules key on the resolved client IP. The resolver is read per request, so it can be set before or after the rule. |
 
 ::: warning
@@ -67,35 +72,45 @@ Fail2Ban filters evaluate the **incoming request** before the handler runs. The 
 
 ### Login Brute Force Protection
 
-The most common use case: ban IPs that repeatedly POST to the login endpoint.
+Do **not** use a request-time Fail2Ban filter to count login POSTs: from 0.8 every match is blocked, so `filter: fn($req) => $req->getUri()->getPath() === '/login'` would reject the **first** legitimate login attempt with `403`. A login POST is a legitimate request that deserves a few retries, so counting it belongs in Allow2Ban or in a post-handler signal:
+
+- **Count login attempts** with [Allow2Ban and a filter](#allow2ban) on `POST /login`: attempts are counted but pass until the threshold, then the key is banned. Successful attempts count too, so choose a generous threshold.
+- **Count real, handler-verified failures** with a signal-only Fail2Ban rule whose filter never matches, driven by [`RequestContext::recordFailure()`](#post-handler-signaling-with-requestcontext). This is the most accurate option and only counts genuine failures.
 
 ```php
 
-// Ban after 5 login attempts in 5 minutes, for 1 hour
-$config->fail2ban->add('login-brute-force',
+// Signal-only: the filter never matches at request time, so nothing is
+// blocked pre-handler. Your login handler reports each verified failure
+// (see "Post-Handler Signaling" below); the key is banned after 5 in 5 min.
+$config->fail2ban->add('login-failures',
     threshold: 5,
     period: 300,       // 5 minute observation window
     ban: 3600,         // 1 hour ban
-    filter: fn($req) => $req->getMethod() === 'POST'
-        && $req->getUri()->getPath() === '/login',
+    filter: fn($req) => false,
 );
 ```
 
 ::: tip
-Counting every POST to `/login` is simpler and works well for most applications. Legitimate users who log in successfully within the threshold are unaffected. Set a generous enough threshold (5-10) so users who mistype their password are not banned.
+Set a generous enough threshold so users who mistype their password are not banned. The signal-only rule above counts only genuine failures, so its threshold can be tight (5-10); an Allow2Ban rule counting every login attempt should use a more generous threshold, since successful logins count too.
 :::
 
 ### Credential Stuffing Defense
 
-Credential stuffing uses stolen username/password lists from data breaches. Defend against it by combining IP-based banning with user-based throttling:
+Credential stuffing uses stolen username/password lists from data breaches. Defend against it by combining Allow2Ban (to ban IPs that make many login attempts, letting real attempts through until the threshold) with user-based throttling:
 
 ```php
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 
-// Per-IP tracking: ban after 10 login attempts in 10 minutes
-$config->fail2ban->add('credential-stuffing-ip',
-    threshold: 10,
+// Per-IP: count login attempts (POST /login) and ban after 30 in 10 minutes.
+// Attempts pass until the threshold, so a user who mistypes their password a
+// few times is not blocked on the spot. Successful attempts count too, so the
+// threshold is generous; for exact failure counting, drive a signal-only rule
+// from your handler with RequestContext::recordFailure().
+$config->allow2ban->add('credential-stuffing-ip',
+    threshold: 30,
     period: 600,
-    ban: 7200,         // 2 hour ban
+    banSeconds: 7200,  // 2 hour ban
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
 );
@@ -114,27 +129,27 @@ $config->throttles->add('credential-stuffing-user',
     }
 );
 
-// Burst detection: 3 login attempts in 10 seconds = suspicious
-$config->throttles->add('login-burst',
+// Burst detection: 3 login attempts in 10 seconds = suspicious. A null key
+// defaults to the resolved client IP; the scope restricts it to login POSTs.
+$config->throttles->addRule(new ThrottleRule(
+    'login-burst',
     limit: 3,
     period: 10,
-    key: function ($req): ?string {
-        if ($req->getMethod() === 'POST' && $req->getUri()->getPath() === '/login') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null;
-    }
-);
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => $req->getMethod() === 'POST' && $req->getUri()->getPath() === '/login'
+    ),
+));
 ```
 
 This three-layer strategy defends against different attack speeds:
-- **Fail2Ban** catches persistent IP-based attacks and bans for hours
+- **Allow2Ban** catches persistent IP-based attacks and bans for hours, without blocking a user's first mistyped password
 - **Per-username throttle** prevents attacks that rotate IPs but target the same account
 - **Burst detection** catches rapid-fire automated tools immediately
 
 ### API Signature Abuse
 
-Ban clients sending invalid API signatures. A middleware running before Phirewall validates the signature and records the outcome and the verified client id on the request as attributes:
+Block and ban clients sending invalid API signatures. An invalid signature is unambiguously malicious, so Fail2Ban is the right tool: each invalid-signature request is blocked with `403` on the spot, and the key is banned after the threshold. A middleware running before Phirewall validates the signature and records the outcome and the verified client id on the request as attributes:
 
 ```php
 // The Fail2Ban rule reads the attributes the prior middleware set
@@ -144,7 +159,8 @@ $config->fail2ban->add('api-abuse',
     ban: 900,          // 15 minute ban
     filter: fn($req) => $req->getAttribute('apiSignatureValid') === false,
     // Key on the verified client id (an internal identifier, not the raw API
-    // secret), falling back to the client IP when the request is unauthenticated.
+    // secret), falling back to the raw peer address when the request is
+    // unauthenticated.
     key: fn($req): ?string =>
         $req->getAttribute('apiClientId') ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null),
 );
@@ -152,20 +168,23 @@ $config->fail2ban->add('api-abuse',
 
 ### Persistent Scanner Blocking
 
-Ban IPs that persistently probe your application:
+Ban IPs that probe sensitive paths. Each probe is unambiguously malicious, so Fail2Ban blocks it with `403` immediately and bans the IP after repeated probes within the window:
 
 ```php
 
 $config->fail2ban->add('persistent-scanner',
-    threshold: 10,     // 10 matched requests
+    threshold: 10,     // ban after 10 probes
     period: 60,        // in 1 minute
     ban: 86400,        // 24 hour ban
-    filter: fn($req) => true,
+    filter: fn($req) => (bool) preg_match(
+        '#^/(\.env|\.git(?:/|$)|\.aws/credentials|\.htpasswd)#i',
+        $req->getUri()->getPath(),
+    ),
 );
 ```
 
-::: warning
-The filter `fn($req) => true` counts every request that reaches the Fail2Ban layer. Because safelisted and blocklisted requests never reach Fail2Ban, this effectively counts requests that passed safelists and blocklists but are still suspicious. Use with care: this is a broad filter.
+::: warning Do not use `fn($req) => true` for Fail2Ban
+Before 0.8 a broad `fn($req) => true` filter merely counted requests and banned after the threshold. From 0.8 every match is blocked, so `fn($req) => true` blocks **every** request that reaches the Fail2Ban layer (everything not safelisted or blocklisted) with `403`. Keep Fail2Ban filters tied to specific, unambiguously malicious request characteristics. To ban purely on request volume, use [Allow2Ban](#allow2ban) instead.
 :::
 
 ## Post-Handler Signaling with RequestContext {#post-handler-signaling-with-requestcontext}
@@ -270,20 +289,32 @@ Use the null-safe operator (`$context?->recordFailure(...)`) so your handler wor
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **Pre-handler filter** (path/method) | Simple, no handler changes | Counts all attempts, not only failures |
-| **Prior middleware + header** | Can signal actual failures | Requires extra middleware, complex flow |
-| **RequestContext API** | Signals actual failures from handler | Requires handler integration |
+| **Pre-handler Fail2Ban filter** (path/method) | Simple, no handler changes | Blocks **every** match from 0.8, so it cannot count legitimate login POSTs; only use it for unambiguously malicious matches |
+| **Allow2Ban filter + failure marker header** | Counts matches but lets them pass until the threshold | Needs an upstream that sets a trustworthy marker header |
+| **RequestContext API** (signal-only Fail2Ban) | Signals actual failures from handler; never blocks a legitimate attempt | Requires handler integration |
 
-RequestContext is the most accurate approach because it only increments the fail2ban counter when your application confirms a failure (wrong password, invalid token, etc.). Successful logins are never counted.
+RequestContext is the most accurate approach because it only increments the fail2ban counter when your application confirms a failure (wrong password, invalid token, etc.). Successful logins are never counted, and no legitimate request is ever blocked pre-handler.
 
 ## Allow2Ban {#allow2ban}
 
-Allow2Ban is a **dedicated section** (`$config->allow2ban`) with its own API. It is the inverse of Fail2Ban: instead of counting only filtered "bad" requests, it counts **every request** for a given key and bans once the count reaches the threshold. Think of it as "n requests allowed, then you're out": with `threshold: n`, the nth request itself is the one that triggers and is blocked.
+Allow2Ban is a **dedicated section** (`$config->allow2ban`) with its own API. Like Fail2Ban it counts matches per key and bans once the count reaches the threshold, but unlike Fail2Ban it **lets matching requests pass** until the threshold is crossed instead of blocking each one. Think of it as "n requests allowed, then you're out": with `threshold: n`, the nth request itself is the one that triggers and is blocked.
+
+Allow2Ban takes an **optional filter**:
+
+- **Without a filter** it counts **every** request for the key, a hard volume cap.
+- **With a filter** it counts only the requests the filter matches; other requests are not counted at all.
+
+Either way, an already-banned key is blocked on **every** request regardless of the filter.
 
 ### How It Works
 
 ```text
 Request --> Is key already banned? --> Yes --> 403 Forbidden
+                    |
+                    No
+                    |
+                    v
+            Filter set and no match? --> Yes --> Allow (not counted)
                     |
                     No
                     |
@@ -299,8 +330,6 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
             BAN key for configured duration --> 403 Forbidden
 ```
 
-There is no filter; every request matching the key extractor is counted.
-
 ### Configuration
 
 ```php
@@ -309,21 +338,48 @@ $config->allow2ban->add(
     int $threshold,
     int $period,
     int $banSeconds,
-    ?Closure $key = null
+    ?Closure $key = null,
+    ?Closure $filter = null
 ): Allow2BanSection
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `$name` | `string` | Unique rule identifier |
-| `$threshold` | `int` | Number of requests that triggers the ban (must be >= 1). The Nth request is itself banned (matching rack-attack `maxretry` semantics). |
+| `$threshold` | `int` | Number of counted requests that triggers the ban (must be >= 1). The Nth counted request is itself banned. |
 | `$period` | `int` | Time window for counting requests in seconds (must be >= 1) |
 | `$banSeconds` | `int` | Ban duration in seconds (must be >= 1) |
 | `$key` | `?Closure` | `fn(ServerRequestInterface): ?string`, return key to track, or `null` to skip. When omitted, defaults to the client IP from the Config's IP resolver (see Fail2Ban's `$key` above). |
+| `$filter` | `?Closure` | `fn(ServerRequestInterface): bool`, return `true` to count the request. Omit to count every request. Use `static fn() => false` for a signal-only rule driven solely by [`RequestContext::recordHit()`](/advanced/request-context#recording-allow2ban-hits). |
 
 ::: tip
 Note the parameter name difference: Fail2Ban uses `$ban`, Allow2Ban uses `$banSeconds`. Both accept duration in seconds.
 :::
+
+### Filtered Counting
+
+Count only the requests you care about and let everything else pass unmetered. This is the natural home for login brute-force counting and any "count these specific requests, ban after N" policy:
+
+```php
+
+// Only count login attempts (POST /login). Reads and other paths are never
+// counted, so the client can browse freely but is banned after 30 login
+// attempts in 5 minutes. Successful attempts count too, so the threshold is
+// generous; to count only genuine failures, drive a signal-only rule from
+// your handler with RequestContext::recordHit().
+$config->allow2ban->add(
+    name: 'login-brute-force',
+    threshold: 30,
+    period: 300,
+    banSeconds: 3600,
+    // No key: the rule bans the resolved client IP (proxy-aware). Passing a
+    // key that returns REMOTE_ADDR would bypass that resolver.
+    filter: fn($req): bool => $req->getMethod() === 'POST'
+        && $req->getUri()->getPath() === '/login',
+);
+```
+
+Matching requests still pass until the 30th within the window; the 30th is the one blocked and banned.
 
 ### High-Volume Request Banning
 
@@ -370,14 +426,10 @@ $config->allow2ban->add(
     threshold: 20,
     period: 300,
     banSeconds: 1800,  // 30 minute ban
-    key: function ($req): ?string {
-        // Only count unauthenticated requests to API endpoints
-        if ($req->getHeaderLine('Authorization') === ''
-            && str_starts_with($req->getUri()->getPath(), '/api/')) {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null;
-    },
+    // Count only unauthenticated requests to API endpoints. No key: the rule
+    // bans the resolved client IP (proxy-aware).
+    filter: fn($req): bool => $req->getHeaderLine('Authorization') === ''
+        && str_starts_with($req->getUri()->getPath(), '/api/'),
 );
 ```
 
@@ -386,10 +438,11 @@ $config->allow2ban->add(
 | Aspect | Fail2Ban | Allow2Ban |
 |--------|----------|-----------|
 | **Section** | `$config->fail2ban` | `$config->allow2ban` |
-| **Filter** | Required: only matching requests are counted | No filter: all requests for the key are counted |
-| **Trigger** | Repeated "bad" requests matching the filter | Exceeding a total request volume |
-| **Use case** | Brute force, credential stuffing, scanner blocking | Volume abuse, DDoS mitigation, API abuse |
-| **Event** | `Fail2BanBanned` | `Allow2BanBanned` |
+| **Filter** | Required: marks a request as malicious | Optional: without it counts every request, with it counts only matches |
+| **On a match** | **Blocks immediately** (`403`) and counts | **Lets the request pass** and counts, until the threshold |
+| **Trigger** | Any match (block); Nth match (ban) | Nth counted request (ban) |
+| **Use case** | Unambiguously malicious matches (scanner paths, invalid signatures), signal-only rules | Login brute-force counting, volume abuse, "count these, ban after N" |
+| **Events** | `Fail2BanMatched` (sub-threshold block), `Fail2BanBanned` (ban) | `Allow2BanBanned` (ban) |
 | **Ban parameter** | `$ban` | `$banSeconds` |
 
 ## Managing Bans
@@ -434,7 +487,23 @@ Notes:
 
 ## Events
 
-When a key is banned, an event is dispatched through your PSR-14 event dispatcher. Fail2Ban and Allow2Ban each dispatch their own event type.
+Fail2Ban and Allow2Ban dispatch events through your PSR-14 event dispatcher. Fail2Ban dispatches `Fail2BanMatched` for every match blocked below the threshold and `Fail2BanBanned` for the match that bans (never both for the same request); Allow2Ban dispatches `Allow2BanBanned` when a key is banned.
+
+### Fail2BanMatched
+
+Dispatched when a Fail2Ban filter matches a request that is blocked **below** the ban threshold. The Nth (threshold) match dispatches `Fail2BanBanned` instead, never both. The post-handler `RequestContext::recordFailure()` path never dispatches this event.
+
+```php
+use Flowd\Phirewall\Events\Fail2BanMatched;
+
+// Event properties
+$event->rule;           // string - Rule name
+$event->key;            // string - Matched key (e.g., IP address)
+$event->threshold;      // int - Configured threshold
+$event->period;         // int - Observation window (seconds)
+$event->count;          // int - Match count after this request (< threshold)
+$event->serverRequest;  // ServerRequestInterface
+```
 
 ### Fail2BanBanned
 
@@ -522,14 +591,24 @@ $config->safelists->add('health', fn($req) => $req->getUri()->getPath() === '/he
 // Layer 2: Blocklist known bad actors
 $config->blocklists->knownScanners();
 
-// Layer 3: Fail2Ban for brute force (counts POST to /login)
-$config->fail2ban->add('login',
-    threshold: 5, period: 300, ban: 3600,
+// Layer 3: Fail2Ban blocks and bans probes to sensitive paths on match
+$config->fail2ban->add('scanner-probe',
+    threshold: 5, period: 60, ban: 86400,
+    filter: fn($req) => (bool) preg_match(
+        '#^/(\.env|\.git(?:/|$)|\.aws/credentials)#i',
+        $req->getUri()->getPath(),
+    ),
+);
+
+// Layer 4: Allow2Ban bans IPs that make many login attempts, letting real
+// attempts through until the threshold
+$config->allow2ban->add('login-brute-force',
+    threshold: 30, period: 300, banSeconds: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
 );
 
-// Layer 4: Allow2Ban for volume abuse
+// Layer 4b: Allow2Ban for raw volume abuse
 $config->allow2ban->add('volume-abuse',
     threshold: 200, period: 60, banSeconds: 1800,
 );
@@ -542,7 +621,7 @@ $config->throttles->add('global',
 
 ## Best Practices
 
-1. **Use specific filters.** A broad filter like `fn() => true` can lead to false bans. Prefer precise filters tied to specific request characteristics (path, method, headers).
+1. **Use specific Fail2Ban filters.** From 0.8 a Fail2Ban filter blocks every match, so a broad filter like `fn() => true` blocks all traffic reaching the layer, not just repeat offenders. Tie Fail2Ban filters to unambiguously malicious characteristics (scanner paths, invalid signatures). To count requests that are themselves legitimate, use Allow2Ban.
 
 2. **Set reasonable thresholds.** Too low and you risk banning legitimate users. Too high and attackers have more attempts. Start with 5-10 for login protection, 50-200 for Allow2Ban volume limits.
 
@@ -556,4 +635,30 @@ $config->throttles->add('global',
 
 7. **Use infrastructure mirroring.** For the most effective defense, mirror bans to Apache `.htaccess` or your web server so banned IPs are blocked before reaching PHP. See [Infrastructure Adapters](/advanced/infrastructure).
 
-8. **Choose the right mechanism.** Use Fail2Ban when you need a filter to detect specific bad behavior. Use Allow2Ban when you want a blanket volume limit with a ban (not only rate limiting).
+8. **Choose the right mechanism.** Use Fail2Ban to block and ban unambiguously malicious matches on the spot (or as a signal-only rule driven by `RequestContext`). Use Allow2Ban when the counted requests are themselves legitimate and should pass until the threshold (login brute-force counting, blanket volume limits).
+
+## Migrating to 0.8 {#migrating-to-08}
+
+0.8 changes the Fail2Ban and Allow2Ban semantics. Two behavioral changes affect existing configs:
+
+**Fail2Ban now blocks every filter match.** Previously a match below the threshold passed through, so a Fail2Ban filter acted as a slow counter. Now every match is blocked with `403`.
+
+- A Fail2Ban rule whose filter matches **only unambiguously malicious** traffic (scanner paths, WAF-flagged requests, invalid signatures) needs **no change** and now blocks the probe immediately, which is the intended behavior.
+- A Fail2Ban rule whose filter can match a **legitimate** request (for example counting every login POST) must move to **Allow2Ban with a filter**, which counts matches but lets them pass until the threshold:
+
+  ```php
+  // Before (0.7): counted login POSTs, banned after 5
+  $config->fail2ban->add('login', threshold: 5, period: 300, ban: 3600,
+      filter: fn($req) => $req->getMethod() === 'POST' && $req->getUri()->getPath() === '/login');
+
+  // After (0.8): same intent, but real login attempts still pass until the ban
+  $config->allow2ban->add('login', threshold: 5, period: 300, banSeconds: 3600,
+      filter: fn($req) => $req->getMethod() === 'POST' && $req->getUri()->getPath() === '/login');
+  ```
+
+  Note the parameter rename `ban:` to `banSeconds:`; the key still defaults to the client IP.
+- A **signal-only** rule (`filter: fn() => false` driven by `RequestContext::recordFailure()`) is **unaffected**: `recordFailure()` still only counts and may ban, never blocks the current request and never dispatches `Fail2BanMatched`. This is the recommended pattern for handler-verified login failures. The shipped presets need no change either: the core presets use blocklists (not fail2ban), and the OWASP CRS fail2ban preset matches only unambiguously malicious traffic, which is meant to block on sight.
+
+**Allow2Ban gained an optional filter** (see [Filtered Counting](#filtered-counting)). Existing filterless Allow2Ban rules keep the exact previous behavior (a hard volume cap counting every request), so no change is required.
+
+New in 0.8: the [`Fail2BanMatched`](#fail2banmatched) event and `DecisionPath::Fail2BanMatched` (diagnostics category `fail2ban_matched`). See [Observability](/advanced/observability).

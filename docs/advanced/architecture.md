@@ -23,7 +23,7 @@ SafelistEvaluator      (match? --> allow, skip remaining)
 BlocklistEvaluator     (match? --> 403, skip remaining)
   |
   v
-Fail2BanEvaluator      (banned or threshold hit? --> 403, skip remaining)
+Fail2BanEvaluator      (banned or filter match? --> 403, skip remaining)
   |
   v
 ThrottleEvaluator      (rate exceeded? --> 429, skip remaining)
@@ -96,9 +96,9 @@ Checks blocklist rules. On the first match, dispatches `BlocklistMatched`, sets 
 For each fail2ban rule:
 
 1. Checks if the key is already banned - if so, returns a blocked result immediately
-2. If the filter matches, increments the failure counter and bans if the threshold is reached
+2. If the filter matches, increments the failure counter and blocks the request (`403`). A match below the threshold sets `DecisionPath::Fail2BanMatched` and dispatches `Fail2BanMatched`; the Nth match additionally bans the key, sets `DecisionPath::Fail2BanBanned`, and dispatches `Fail2BanBanned` (never both events)
 
-Both the pre-handler path (during `decide()`) and the post-handler path (via `processRecordedSignal()`) use the same `count >= threshold` comparison: the Nth matching request triggers the ban and is itself blocked. This matches rack-attack's `maxretry` semantics and is consistent with Allow2Ban.
+The pre-handler path (during `decide()`) blocks on every match and bans at the threshold. The post-handler path (via `processRecordedSignal()`) shares the same `count >= threshold` ban comparison but never blocks the current request and never dispatches `Fail2BanMatched`. The ban fires on the Nth match, consistent with Allow2Ban.
 
 See [Request Context](/advanced/request-context) for post-handler failure signaling.
 
@@ -114,8 +114,9 @@ For each throttle rule:
 
 Unlike other evaluators, Allow2BanEvaluator **processes all rules before returning**. For each allow2ban rule:
 
-1. If the key is already banned, records the block
-2. Otherwise, increments the counter and bans if the threshold is reached (`count >= threshold`)
+1. If the key is already banned, records the block (regardless of the filter)
+2. Otherwise, if the rule has a filter that does not match, skips the rule (not counted)
+3. Otherwise, increments the counter and bans if the threshold is reached (`count >= threshold`); the matching request itself passes until it is the one that reaches the threshold
 
 After processing all rules, it returns the first block found (or `null` if none). This ensures every counter is incremented on every request, even when an earlier rule already triggered a ban.
 

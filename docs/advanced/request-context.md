@@ -8,10 +8,11 @@ The `RequestContext` API lets your application signal post-handler events (fail2
 
 ## The Problem
 
-Standard fail2ban rules use a filter predicate that evaluates the incoming request. This works for simple patterns (like "every POST to /login counts as a failure attempt"), but it cannot distinguish between successful and failed logins:
+Standard fail2ban rules use a filter predicate that evaluates the incoming request. It cannot distinguish between successful and failed logins, and from 0.8 a fail2ban filter blocks **every** match, so this rule would reject the first legitimate login attempt with `403`:
 
 ```php
-// Problem: this counts EVERY POST to /login, including successful logins
+// Problem: from 0.8 this blocks EVERY POST to /login (including the first
+// legitimate one), because a fail2ban match is always blocked.
 $config->fail2ban->add('login',
     threshold: 5, period: 300, ban: 3600,
     filter: fn($request) => $request->getMethod() === 'POST'
@@ -19,7 +20,7 @@ $config->fail2ban->add('login',
 );
 ```
 
-With `RequestContext`, your handler verifies the credentials first, then signals a failure **only when authentication fails**. This gives you precise control over what counts as a failure.
+With `RequestContext`, the fail2ban filter stays closed (`fn() => false`) so nothing is blocked pre-handler; your handler verifies the credentials first, then signals a failure **only when authentication fails**. This gives you precise control over what counts as a failure. (If an upstream marks failed logins with a header instead, use [Allow2Ban with a filter](/features/fail2ban#allow2ban).)
 
 ## How It Works
 
@@ -123,7 +124,7 @@ The first parameter to `recordFailure()` must **exactly** match the `name` you u
 
 `recordHit()` is the allow2ban counterpart of `recordFailure()`. The same context records **allow2ban** hits: use it to count handler-observable events the pre-handler path cannot see (an expensive operation completed, a webhook delivered a duplicate payload, a third-party API quota was charged) so the count can drive an allow2ban threshold ban. It mirrors `recordFailure()`, and `$key` is likewise optional: omit it to reuse the matching rule's key extractor on the current request.
 
-First, configure an allow2ban rule. To make the rule count *only* the events recorded by the handler (not every request), have the rule's `keyExtractor` return `null` pre-handler; the firewall then skips counting until the handler signals an explicit key via `recordHit()`:
+First, configure an allow2ban rule. To make the rule count *only* the events recorded by the handler (not every request), give it a filter that never matches (`static fn() => false`); the pre-handler path then never counts, and `recordHit()` bypasses the filter so only handler-signalled hits are counted:
 
 ```php
 
@@ -132,29 +133,25 @@ $config->allow2ban->add(
     threshold: 5,
     period: 300,
     banSeconds: 3600,
-    key: fn($request): ?string => null,
+    filter: static fn($request): bool => false,
 );
 ```
 
-In the handler:
+An older idiom achieves the same by having the rule's `keyExtractor` return `null` pre-handler (`key: fn($request): ?string => null`); the firewall then skips counting until the handler signals an explicit key. The `filter: fn() => false` form above is clearer and is the recommended signal-only pattern.
+
+In the handler, record the hit. Omit the key so the rule reuses its own key extractor (the resolved client IP by default) for this request, exactly as `recordFailure()` does:
 
 ```php
 $context = $request->getAttribute(RequestContext::ATTRIBUTE_NAME);
 
 if ($context !== null && $this->operationWasExpensive($request)) {
-    $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
-    $context->recordHit('expensive-endpoint', $ip);
+    $context->recordHit('expensive-endpoint');
 }
 ```
 
-If the rule's `keyExtractor` returns a value pre-handler (the common case), the second argument to `recordHit()` can be omitted; the firewall derives the key the same way it does for `recordFailure()`:
+Pass an explicit second argument only to bucket the count on something other than the rule's default key.
 
-```php
-// Omitting $key reuses the rule's own key extractor on this request.
-$context?->recordHit('expensive-endpoint');
-```
-
-When the rule's `keyExtractor` returns a value pre-handler, **both** the pre-handler counter and the handler's `recordHit()` increment the counter, so the threshold should account for the doubled count.
+When the rule already counts pre-handler (it has no filter, or a filter that matches this request) and its `keyExtractor` returns a value, **both** the pre-handler counter and the handler's `recordHit()` increment the counter, so the threshold should account for the doubled count. With the signal-only `filter` shown above the pre-handler path never counts, so no doubling occurs.
 
 Recorded failures and hits are processed together after your handler returns; retrieve them all with `getRecordedSignals()`.
 
@@ -336,17 +333,17 @@ See [Getting Started: Fail-Open / Fail-Closed](/getting-started#fail-open-fail-c
 
 | Approach | When to Use | Example |
 |----------|-------------|---------|
-| **Filter predicate** | Failures determined by request properties alone | Block every POST to `/admin` |
-| **RequestContext** | Failures require application logic | Ban after 3 failed password attempts |
+| **Fail2Ban filter predicate** | The request is unambiguously malicious from its properties alone (it should be blocked on the spot) | Block and ban probes to `/.env` |
+| **RequestContext** | Failures require application logic, and legitimate requests must not be blocked | Ban after 3 failed password attempts |
 
-### Use the filter when:
-- The request URI, method, or headers are enough to determine failure
+### Use a Fail2Ban filter when:
+- The request URI, method, or headers alone identify malicious traffic that you want blocked immediately (every match is blocked from 0.8)
 - You do not need to inspect the response or run business logic
 
 ### Use RequestContext when:
 - You need to verify credentials before deciding if the request is a failure
 - The failure depends on a database lookup, API call, or response status
-- You want to count only **actual** failures, not all requests to an endpoint
+- You want to count only **actual** failures without blocking legitimate attempts to an endpoint
 
 ## Testing
 

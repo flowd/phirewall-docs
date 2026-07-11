@@ -31,10 +31,11 @@ All events are dispatched **synchronously** during request processing. Every eve
 |-------|-----------------|----------------|
 | `SafelistMatched` | Request matches a safelist rule | `rule`, `serverRequest` |
 | `BlocklistMatched` | Request matches a blocklist rule | `rule`, `serverRequest` |
-| `ThrottleExceeded` | Request exceeds a throttle limit | `rule`, `key`, `limit`, `period`, `count`, `retryAfter` |
-| `Fail2BanBanned` | Key banned after exceeding failure threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count` |
-| `Allow2BanBanned` | Key banned after exceeding request threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count` |
-| `TrackHit` | Tracking rule filter matches | `rule`, `key`, `period`, `count`, `limit`, `thresholdReached` |
+| `ThrottleExceeded` | Request exceeds a throttle limit | `rule`, `key`, `limit`, `period`, `count`, `retryAfter`, `serverRequest` |
+| `Fail2BanMatched` | Fail2Ban filter matches and blocks a request below the ban threshold | `rule`, `key`, `threshold`, `period`, `count`, `serverRequest` |
+| `Fail2BanBanned` | Key banned after reaching the failure threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `Allow2BanBanned` | Key banned after exceeding request threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `TrackHit` | Tracking rule filter matches | `rule`, `key`, `period`, `count`, `limit`, `thresholdReached`, `serverRequest` |
 | `FirewallError` | Error in fail-open mode (cache failure, etc.) | `exception`, `serverRequest` |
 | `PerformanceMeasured` | After every firewall decision | `decisionPath`, `durationMicros`, `ruleName` |
 
@@ -78,6 +79,21 @@ $event->retryAfter;     // int - Seconds until the window resets
 $event->serverRequest;  // ServerRequestInterface
 ```
 
+### Fail2BanMatched
+
+Dispatched when a Fail2Ban filter matches a request that is blocked **below** the ban threshold. The Nth (threshold) match dispatches `Fail2BanBanned` instead, never both. The post-handler `RequestContext::recordFailure()` path only counts and never dispatches this event.
+
+```php
+use Flowd\Phirewall\Events\Fail2BanMatched;
+
+$event->rule;           // string - Rule name
+$event->key;            // string - Matched key (e.g., IP address)
+$event->threshold;      // int - Number of matches before ban
+$event->period;         // int - Observation window in seconds
+$event->count;          // int - Match count after this request (< threshold)
+$event->serverRequest;  // ServerRequestInterface
+```
+
 ### Fail2BanBanned
 
 Dispatched when a key is newly banned by a Fail2Ban rule (failure count crossed the threshold).
@@ -96,7 +112,7 @@ $event->serverRequest;  // ServerRequestInterface
 
 ### Allow2BanBanned
 
-Dispatched when an Allow2Ban rule bans a key after the request volume threshold is exceeded. Allow2Ban counts **all** requests for a key (no filter), making it useful for volume-based banning.
+Dispatched when an Allow2Ban rule bans a key after the counted-request threshold is reached. Allow2Ban counts every request for a key, or only the requests an optional filter matches, letting matching requests pass until the threshold.
 
 ```php
 use Flowd\Phirewall\Events\Allow2BanBanned;
@@ -166,6 +182,7 @@ The `DecisionPath` enum has these cases:
 | `Safelisted` | Matched a safelist rule |
 | `Blocklisted` | Matched a blocklist rule |
 | `Fail2BanBlocked` | Blocked by an existing Fail2Ban ban |
+| `Fail2BanMatched` | Blocked by a Fail2Ban filter match below the threshold |
 | `Fail2BanBanned` | Newly banned by Fail2Ban |
 | `Throttled` | Exceeded a rate limit |
 | `Allow2BanBlocked` | Blocked by an existing Allow2Ban ban |
@@ -222,8 +239,9 @@ Returns an array organized by category, each with a total and a per-rule breakdo
     'safelisted'        => ['total' => 100, 'by_rule' => ['health' => 80, 'metrics' => 20]],
     'blocklisted'       => ['total' => 5,   'by_rule' => ['scanners' => 5]],
     'throttle_exceeded' => ['total' => 2,   'by_rule' => ['ip-limit' => 2]],
-    'fail2ban_blocked'  => ['total' => 3,   'by_rule' => ['login' => 3]],
-    'fail2ban_banned'   => ['total' => 1,   'by_rule' => ['login' => 1]],
+    'fail2ban_blocked'  => ['total' => 3,   'by_rule' => ['scanner-probe' => 3]],
+    'fail2ban_matched'  => ['total' => 4,   'by_rule' => ['scanner-probe' => 4]],
+    'fail2ban_banned'   => ['total' => 1,   'by_rule' => ['scanner-probe' => 1]],
     'allow2ban_banned'  => ['total' => 2,   'by_rule' => ['high-volume' => 2]],
     'track_hit'         => ['total' => 50,  'by_rule' => ['api-calls' => 50]],
     'passed'            => ['total' => 1000, 'by_rule' => []],
@@ -237,6 +255,7 @@ Returns an array organized by category, each with a total and a per-rule breakdo
 | `safelisted` | `SafelistMatched` | Requests that matched safelist rules |
 | `blocklisted` | `BlocklistMatched` | Requests blocked by blocklist rules |
 | `throttle_exceeded` | `ThrottleExceeded` | Requests that exceeded rate limits |
+| `fail2ban_matched` | `Fail2BanMatched` | Requests blocked by a Fail2Ban filter match below the threshold |
 | `fail2ban_banned` | `Fail2BanBanned` | New Fail2Ban bans issued |
 | `fail2ban_blocked` | `PerformanceMeasured` | Requests blocked by existing Fail2Ban bans |
 | `allow2ban_banned` | `Allow2BanBanned` | New Allow2Ban bans issued |

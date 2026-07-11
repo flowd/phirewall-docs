@@ -20,7 +20,7 @@ php examples/01-basic-setup.php
 | # | Example | Description |
 |---|---------|-------------|
 | 01 | [basic-setup](https://github.com/flowd/phirewall/blob/main/examples/01-basic-setup.php) | Minimal configuration to get started |
-| 02 | [brute-force-protection](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php) | Fail2Ban-style login protection |
+| 02 | [brute-force-protection](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php) | Allow2Ban-with-filter login protection |
 | 03 | [api-rate-limiting](https://github.com/flowd/phirewall/blob/main/examples/03-api-rate-limiting.php) | Tiered rate limits for APIs |
 | 06 | [bot-detection](https://github.com/flowd/phirewall/blob/main/examples/06-bot-detection.php) | Scanner and malicious bot blocking |
 | 07 | [ip-blocklist](https://github.com/flowd/phirewall/blob/main/examples/07-ip-blocklist.php) | File-backed IP/CIDR blocklists |
@@ -31,7 +31,7 @@ php examples/01-basic-setup.php
 | 12 | [apache-htaccess](https://github.com/flowd/phirewall/blob/main/examples/12-apache-htaccess.php) | Apache .htaccess IP blocking |
 | 13 | [benchmarks](https://github.com/flowd/phirewall/blob/main/examples/13-benchmarks.php) | Storage backend performance comparison |
 | 15 | [in-memory-pattern-backend](https://github.com/flowd/phirewall/blob/main/examples/15-in-memory-pattern-backend.php) | Configuration-based CIDR/IP blocklists |
-| 16 | [allow2ban](https://github.com/flowd/phirewall/blob/main/examples/16-allow2ban.php) | Volume-based banning (inverse of fail2ban) |
+| 16 | [allow2ban](https://github.com/flowd/phirewall/blob/main/examples/16-allow2ban.php) | Volume-based and filtered banning (pass until the threshold) |
 | 17 | [known-scanners](https://github.com/flowd/phirewall/blob/main/examples/17-known-scanners.php) | Block known attack tools by User-Agent |
 | 18 | [trusted-bots](https://github.com/flowd/phirewall/blob/main/examples/18-trusted-bots.php) | Safelist verified search engine bots via RDNS |
 | 19 | [header-analysis](https://github.com/flowd/phirewall/blob/main/examples/19-header-analysis.php) | Block requests missing standard browser headers |
@@ -143,11 +143,11 @@ SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" "id:933100,ph
 CRS);
 $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
-// ── Fail2Ban ─────────────────────────────────────────────────────────
-$config->fail2ban->add('login-abuse',
+// ── Login brute-force (Allow2Ban) ─────────────────────────────────────────────────────────
+$config->allow2ban->add('login-abuse',
     threshold: 5,
     period: 300,
-    ban: 3600,
+    banSeconds: 3600,
     filter: fn(ServerRequestInterface $req): bool =>
         $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
@@ -277,13 +277,13 @@ class PhirewallFactory
         CRS);
         $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
-        // ── Fail2Ban ─────────────────────────────────────────────
+        // ── Login brute-force (Allow2Ban) ─────────────────────────────────────────────
         // No key: these rules default to the client IP from the
         // global resolver set above.
-        $config->fail2ban->add('login-abuse',
+        $config->allow2ban->add('login-abuse',
             threshold: 5,
             period: 300,
-            ban: 3600,
+            banSeconds: 3600,
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
@@ -516,13 +516,13 @@ class PhirewallServiceProvider extends ServiceProvider
             CRS);
             $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
-            // ── Fail2Ban ─────────────────────────────────────────
+            // ── Login brute-force (Allow2Ban) ─────────────────────────────────────────
             // No key: these rules default to the client IP from the
             // global resolver set above.
-            $config->fail2ban->add('login-abuse',
+            $config->allow2ban->add('login-abuse',
                 threshold: 5,
                 period: 300,
-                ban: 3600,
+                banSeconds: 3600,
                 filter: fn(ServerRequestInterface $req): bool =>
                     $req->getMethod() === 'POST'
                     && $req->getUri()->getPath() === '/login',
@@ -720,11 +720,11 @@ SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" "id:933100,ph
 CRS);
 $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
-// ── Fail2Ban ─────────────────────────────────────────────────────────
-$config->fail2ban->add('login-abuse',
+// ── Login brute-force (Allow2Ban) ─────────────────────────────────────────────────────────
+$config->allow2ban->add('login-abuse',
     threshold: 5,
     period: 300,
-    ban: 3600,
+    banSeconds: 3600,
     filter: fn(ServerRequestInterface $req): bool =>
         $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
@@ -831,13 +831,13 @@ class PhirewallMiddlewareFactory
         CRS);
         $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
-        // ── Fail2Ban ─────────────────────────────────────────────
+        // ── Login brute-force (Allow2Ban) ─────────────────────────────────────────────
         // No key: these rules default to the client IP from the
         // global resolver set above.
-        $config->fail2ban->add('login-abuse',
+        $config->allow2ban->add('login-abuse',
             threshold: 5,
             period: 300,
-            ban: 3600,
+            banSeconds: 3600,
             filter: fn(ServerRequestInterface $req): bool =>
                 $req->getMethod() === 'POST'
                 && $req->getUri()->getPath() === '/login',
@@ -974,6 +974,8 @@ Tiered per-client-IP rate limits for an API, with a tighter cap on an expensive 
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
@@ -995,16 +997,15 @@ $config->throttles->add('global',
     limit: 1000, period: 60,
 );
 
-// Expensive endpoint limit
-$config->throttles->add('search',
-    limit: 20, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getUri()->getPath() === '/api/search') {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+// Expensive endpoint limit. Null key defaults to the resolved client IP;
+// the scope restricts the throttle to the search endpoint.
+$config->throttles->addRule(new ThrottleRule(
+    'search',
+    limit: 20,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/api/search'),
+));
 ```
 
 ---
@@ -1082,11 +1083,19 @@ Complete login protection with throttling, Fail2Ban, and tracking.
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
+use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
 
 $redis = new PredisClient(getenv('REDIS_URL') ?: 'redis://localhost:6379');
 $config = new Config(new RedisCache($redis));
+
+// Resolve the real client IP behind a proxy. Setting it on the Config makes
+// null-key rules proxy-aware, so the scoped login throttles below key on the
+// resolved client IP without touching the raw REMOTE_ADDR peer.
+$config->setIpResolver((new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']))->resolve(...));
 
 // Track all login attempts for dashboards
 $config->tracks->add('login-attempts',
@@ -1111,33 +1120,37 @@ $config->safelists->add('health',
     fn($req) => $req->getUri()->getPath() === '/health'
 );
 
-// Throttle login attempts: 10 per minute per IP
-$config->throttles->add('login-rate',
-    limit: 10, period: 60,
-    key: function ($req): ?string {
-        if ($req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null;
-    }
-);
+// Throttle login attempts: 10 per minute per client IP. Null key defaults to
+// the resolved client IP; the scope restricts the throttle to login POSTs.
+$config->throttles->addRule(new ThrottleRule(
+    'login-rate',
+    limit: 10,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST'
+    ),
+));
 
 // Burst detection: 3 login attempts in 10 seconds
-$config->throttles->add('login-burst',
-    limit: 3, period: 10,
-    key: function ($req): ?string {
-        if ($req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null;
-    }
-);
+$config->throttles->addRule(new ThrottleRule(
+    'login-burst',
+    limit: 3,
+    period: 10,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST'
+    ),
+));
 
-// Fail2Ban: ban after 5 login attempts in 5 minutes
-$config->fail2ban->add('login-brute-force',
+// Allow2Ban: ban after 5 login attempts in 5 minutes. Login POSTs are
+// legitimate, so they pass until the threshold (a Fail2Ban filter would
+// block the first one). For accuracy, count only handler-verified failures
+// with the post-handler pattern shown in the next section.
+$config->allow2ban->add('login-brute-force',
     threshold: 5,
     period: 300,
-    ban: 3600,
+    banSeconds: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
 );
@@ -1191,7 +1204,7 @@ The middleware automatically processes recorded signals after the handler return
 
 ## Allow2Ban: Volume-Based Banning
 
-Allow2Ban is the inverse of Fail2Ban: it counts every request for a key and bans after a threshold, without needing a filter predicate.
+Allow2Ban counts requests for a key and bans after a threshold, letting matching requests pass until then. Without a filter it counts every request (a hard volume cap); with an optional filter it counts only the matching requests.
 
 ```php
 use Flowd\Phirewall\Config;
@@ -1204,6 +1217,16 @@ $config->allow2ban->add('high-volume-ban',
     threshold: 100,
     period: 60,
     banSeconds: 3600,
+);
+
+// With a filter: count only order submissions. Reads and other paths are
+// not counted, so a client browses freely but is capped on order POSTs.
+$config->allow2ban->add('order-flood',
+    threshold: 3,
+    period: 60,
+    banSeconds: 3600,
+    filter: fn($req) => $req->getMethod() === 'POST'
+        && $req->getUri()->getPath() === '/api/orders',
 );
 ```
 
@@ -1420,7 +1443,9 @@ A production configuration combining safelists, blocklists, OWASP rules, bot det
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
@@ -1499,18 +1524,25 @@ CRS);
 $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($owaspRules)));
 
 // === FAIL2BAN ===
-$config->fail2ban->add('login-abuse',
-    threshold: 5, period: 300, ban: 3600,
+// Unambiguously malicious matches are blocked on the spot and banned after
+// the threshold. Keep the filter tight: from 0.8 every match is blocked.
+$config->fail2ban->add('scanner-probe',
+    threshold: 10, period: 60, ban: 86400,
+    filter: fn($req) => (bool) preg_match(
+        '#^/(\.env|\.git(?:/|$)|\.aws/credentials|\.htpasswd)#i',
+        $req->getUri()->getPath(),
+    ),
+);
+
+// === ALLOW2BAN ===
+// Login POSTs are legitimate, so count them here (they pass until the
+// threshold) instead of with a Fail2Ban filter.
+$config->allow2ban->add('login-abuse',
+    threshold: 5, period: 300, banSeconds: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
 );
 
-$config->fail2ban->add('persistent-scanner',
-    threshold: 10, period: 60, ban: 86400,
-    filter: fn($req) => true,
-);
-
-// === ALLOW2BAN ===
 $config->allow2ban->add('flood-protection',
     threshold: 500, period: 60, banSeconds: 3600,
 );
@@ -1524,25 +1556,23 @@ $config->throttles->add('burst',
     limit: 50, period: 5,
 );
 
-$config->throttles->add('write-ops',
-    limit: 100, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if (in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+$config->throttles->addRule(new ThrottleRule(
+    'write-ops',
+    limit: 100,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn($req): bool => in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+    ),
+));
 
-$config->throttles->add('login',
-    limit: 10, period: 60,
-    key: function ($req) use ($proxyResolver): ?string {
-        if ($req->getUri()->getPath() === '/login') {
-            return $proxyResolver->resolve($req);
-        }
-        return null;
-    }
-);
+$config->throttles->addRule(new ThrottleRule(
+    'login',
+    limit: 10,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/login'),
+));
 
 // === CUSTOM RESPONSES ===
 $config->blocklistedResponseFactory = new ClosureBlocklistedResponseFactory(
@@ -1662,6 +1692,9 @@ $dispatcher = new class ($logger) implements EventDispatcherInterface {
         if (property_exists($event, 'key')) $context['key'] = $event->key;
         if (property_exists($event, 'serverRequest')) {
             $req = $event->serverRequest;
+            // Raw peer address (the proxy IP behind a load balancer). For the
+            // resolved client IP, log $event->key (keyless rules key on it) or
+            // resolve it here with your TrustedProxyResolver.
             $context['ip'] = $req->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
             $context['path'] = $req->getUri()->getPath();
         }
@@ -1682,7 +1715,9 @@ $dispatcher = new class ($logger) implements EventDispatcherInterface {
 
 $config = new Config(new RedisCache($redis), $dispatcher);
 $config->throttles->add('api', limit: 100, period: 60);
-$config->fail2ban->add('login', threshold: 5, period: 300, ban: 3600,
+// Login POSTs are legitimate; count them with Allow2Ban (they pass until
+// the threshold) rather than a Fail2Ban filter that blocks every match.
+$config->allow2ban->add('login', threshold: 5, period: 300, banSeconds: 3600,
     filter: fn($req) => $req->getMethod() === 'POST'
         && $req->getUri()->getPath() === '/login',
 );
@@ -1721,10 +1756,12 @@ $config->blocklists->fileIp('banned-ips', '/var/lib/phirewall/banned.txt');
 // IP blocklist from CIDR ranges
 $config->blocklists->ip('known-bad', ['198.51.100.0/24', '203.0.113.0/24']);
 
-// Auto-ban persistent scanners
-$config->fail2ban->add('persistent-scanner',
-    threshold: 10, period: 60, ban: 86400,
-    filter: fn($req) => true,
+// Auto-ban persistent probers by volume: any client that keeps hitting
+// after passing the safelist and blocklist layers is banned after 10
+// requests in a minute. (A Fail2Ban `fn($req) => true` filter would block every
+// request from 0.8, so a volume cap belongs in Allow2Ban.)
+$config->allow2ban->add('persistent-scanner',
+    threshold: 10, period: 60, banSeconds: 86400,
 );
 
 // Global rate limit as backstop

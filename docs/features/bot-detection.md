@@ -282,8 +282,8 @@ $config->blocklists->add('scanner-paths', function ($req): bool {
     $path = strtolower($req->getUri()->getPath());
 
     $scannerPaths = [
-        // Common admin panels
-        '/admin-panel', '/admin-login', '/xmlrpc.php',
+        // Cloud and credential leaks
+        '/.aws/credentials', '/.htpasswd', '/.ssh/id_rsa',
         // Database tools
         '/phpmyadmin', '/pma', '/mysqladmin',
         // Sensitive files
@@ -337,10 +337,15 @@ $config->blocklists->add('scanner-paths', function ($req): bool {
     return false;
 });
 
-// 5. Ban persistent scanners that keep trying
-$config->fail2ban->add('persistent-scanner',
-    threshold: 5, period: 60, ban: 86400,
-    filter: fn($req) => true,
+// 5. Ban persistent scanners by sheer volume: anything still hitting after
+//    the safelist and blocklist layers is banned for a day once it crosses a
+//    coarse volume cap. Keep this cap well above the throttle limit below so
+//    it only catches sustained abuse, not a normal page load (one HTML
+//    document plus its assets is easily more than a handful of requests).
+//    (A Fail2Ban `fn($req) => true` filter would block every request from 0.8, so a
+//    volume cap belongs in Allow2Ban.)
+$config->allow2ban->add('persistent-scanner',
+    threshold: 600, period: 60, banSeconds: 86400,
 );
 
 // 6. Rate limit everything else
@@ -354,13 +359,16 @@ This layered approach ensures:
 - **Known attack tools** are blocked at the blocklist layer
 - **Primitive scrapers** missing browser headers are blocked
 - **Scanner probes** to sensitive paths are blocked
-- **Persistent probers** that evade the above are banned by [Fail2Ban](/features/fail2ban)
+- **Persistent probers** that evade the above are banned by volume with [Allow2Ban](/features/fail2ban#allow2ban)
 - **All other traffic** is rate limited as a backstop
 
 ### Evaluation Order
 
 ```text
 Request
+   |
+   v
+Track (record signals only, never blocks) --> continue
    |
    v
 Safelists (verified bots) --> match? --> ALLOW immediately

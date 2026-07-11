@@ -12,7 +12,7 @@ Protect login endpoints with layered rate limiting and fail2ban.
 
 ### Post-Handler Failure Signaling (recommended)
 
-The accurate way to ban on *real* failed logins is to record the failure **after** your handler has verified the credentials, using [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext). The fail2ban rule's filter never matches on its own (`fn() => false`); your handler decides what counts as a failure and records it, and the middleware processes the recorded signal once the handler returns. This pattern is demonstrated in [`examples/02-brute-force-protection.php`](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php).
+The accurate way to ban on *real* failed logins is to record the failure **after** your handler has verified the credentials, using [RequestContext](/features/fail2ban#post-handler-signaling-with-requestcontext). The fail2ban rule's filter never matches on its own (`fn() => false`), so nothing is blocked pre-handler; your handler decides what counts as a failure and records it, and the middleware processes the recorded signal once the handler returns. This pattern is demonstrated in [`examples/27-request-context.php`](https://github.com/flowd/phirewall/blob/main/examples/27-request-context.php). To count login attempts with a request-inspectable filter instead (banning after a generous threshold, since successful attempts count too), [`examples/02-brute-force-protection.php`](https://github.com/flowd/phirewall/blob/main/examples/02-brute-force-protection.php) uses Allow2Ban with a filter.
 
 ```php
 use Flowd\Phirewall\Config;
@@ -45,16 +45,21 @@ Only genuine failures are counted, so a user who logs in correctly on the first 
 Add a rate limit specifically on the login path to slow down attackers:
 
 ```php
-$config->throttles->add('login-throttle',
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
+use Psr\Http\Message\ServerRequestInterface;
+
+// A null key defaults to the resolved client IP (proxy-aware via the Config's
+// IP resolver); the scope filter restricts the throttle to the login path.
+$config->throttles->addRule(new ThrottleRule(
+    'login-throttle',
     limit: 10,
     period: 60,
-    key: function (ServerRequestInterface $req): ?string {
-        if ($req->getUri()->getPath() === '/login') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null; // Skip for other endpoints
-    },
-);
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn(ServerRequestInterface $req): bool => $req->getUri()->getPath() === '/login'
+    ),
+));
 ```
 
 ### Credential Stuffing (Per-Username)
@@ -314,6 +319,13 @@ $config->throttles->sliding('api',
 Apply different limits based on subscription tier:
 
 ```php
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+use Psr\Http\Message\ServerRequestInterface;
+
+// Anonymous callers fall back to their client IP; resolve it through the
+// trusted-proxy resolver instead of the raw REMOTE_ADDR peer address.
+$proxy = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
 $config->throttles->add('api',
     limit: fn(ServerRequestInterface $req): int => match ($req->getAttribute('plan')) {
         'enterprise' => 10000,
@@ -322,8 +334,8 @@ $config->throttles->add('api',
         default => 50,
     },
     period: 60,
-    key: fn($req): ?string =>
-        $req->getAttribute('userId') ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null),
+    key: fn(ServerRequestInterface $req): ?string =>
+        $req->getAttribute('userId') ?? $proxy->resolve($req),
 );
 ```
 
@@ -336,15 +348,22 @@ $config->throttles->add('api',
 Apply stricter limits to mutating operations:
 
 ```php
-$config->throttles->add('write-ops',
-    limit: 50, period: 60,
-    key: function (ServerRequestInterface $req): ?string {
-        if (in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null;
-    },
-);
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
+use Psr\Http\Message\ServerRequestInterface;
+
+// A null key defaults to the resolved client IP; the scope filter restricts the
+// throttle to mutating methods.
+$config->throttles->addRule(new ThrottleRule(
+    'write-ops',
+    limit: 50,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(
+        fn(ServerRequestInterface $req): bool =>
+            in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
+    ),
+));
 ```
 
 ### Allow2Ban for High-Volume Abuse
@@ -381,13 +400,19 @@ A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, 
 Apply stricter limits to resource-intensive endpoints:
 
 ```php
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+use Psr\Http\Message\ServerRequestInterface;
+
+// Anonymous callers fall back to their client IP; resolve it through the
+// trusted-proxy resolver instead of the raw REMOTE_ADDR peer address.
+$proxy = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
+
 $config->throttles->add('export',
     limit: 10,
     period: 3600,
-    key: function (ServerRequestInterface $req): ?string {
+    key: function (ServerRequestInterface $req) use ($proxy): ?string {
         if (str_starts_with($req->getUri()->getPath(), '/api/export')) {
-            return $req->getAttribute('userId')
-                ?? ($req->getServerParams()['REMOTE_ADDR'] ?? null);
+            return $req->getAttribute('userId') ?? $proxy->resolve($req);
         }
         return null;
     },
@@ -414,7 +439,9 @@ Combine all layers into a single production configuration:
 
 ```php
 use Flowd\Phirewall\Config;
+use Flowd\Phirewall\Config\ClosureRequestMatcher;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
+use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
@@ -473,11 +500,15 @@ $config->fail2ban->add('login-brute-force',
 
 // ── Layer 5: Throttling ───────────────────────────────────────────────
 $config->throttles->multi('api', [1 => 5, 60 => 200]);
-$config->throttles->add('login', limit: 10, period: 60, key: function ($req): ?string {
-    return $req->getUri()->getPath() === '/login'
-        ? ($req->getServerParams()['REMOTE_ADDR'] ?? null)
-        : null;
-});
+// Null key defaults to the resolved client IP (the resolver set above);
+// the scope filter restricts the throttle to the login path.
+$config->throttles->addRule(new ThrottleRule(
+    'login',
+    limit: 10,
+    period: 60,
+    keyExtractor: null,
+    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/login'),
+));
 
 // ── Layer 6: Allow2Ban ────────────────────────────────────────────────
 $config->allow2ban->add('volume-ban',
@@ -504,9 +535,9 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 | Track | Observe and count (never blocks) | - |
 | Safelist | Bypass all remaining checks | 200 (pass-through) |
 | Blocklist | IP lists, OWASP rules, patterns | 403 |
-| Fail2Ban | Ban after repeated filtered failures | 403 |
+| Fail2Ban | Block every filter match; ban after repeated matches | 403 |
 | Throttle | Rate limiting (fixed, sliding, multi) | 429 |
-| Allow2Ban | Ban after exceeding request threshold | 403 |
+| Allow2Ban | Count (all or filtered), ban after threshold | 403 |
 | Pass | No rule matched | 200 (pass-through) |
 
 ## Best Practices
@@ -521,6 +552,6 @@ Track → Safelist → Blocklist → Fail2Ban → Throttle → Allow2Ban → Pas
 
 5. **Tune for your application.** Every application has different traffic patterns. Monitor [diagnostics](/advanced/observability) and adjust thresholds based on real data.
 
-6. **Combine OWASP with fail2ban.** Use OWASP rules to detect attack payloads, and fail2ban to ban repeat offenders who trigger multiple rules.
+6. **Ban repeat OWASP offenders correctly.** An OWASP blocklist match is blocked (`403`) before fail2ban runs, so a separate fail2ban rule never sees it. To also ban a persistent attacker, use the OWASP CRS fail2ban preset (a fail2ban rule whose filter is the CRS matcher itself, so it blocks each match and bans repeat offenders) or mirror blocklist hits to the edge with an [infrastructure adapter](/advanced/infrastructure).
 
 7. **Keep rule IDs unique.** Follow the OWASP convention: `942xxx` for SQLi, `941xxx` for XSS, `933xxx` for RCE, `930xxx` for path traversal.
