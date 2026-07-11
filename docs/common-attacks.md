@@ -47,6 +47,7 @@ Add a rate limit specifically on the login path to slow down attackers:
 ```php
 use Flowd\Phirewall\Config\ClosureRequestMatcher;
 use Flowd\Phirewall\Config\Rule\ThrottleRule;
+use Psr\Http\Message\ServerRequestInterface;
 
 // A null key defaults to the resolved client IP (proxy-aware via the Config's
 // IP resolver); the scope filter restricts the throttle to the login path.
@@ -349,6 +350,7 @@ Apply stricter limits to mutating operations:
 ```php
 use Flowd\Phirewall\Config\ClosureRequestMatcher;
 use Flowd\Phirewall\Config\Rule\ThrottleRule;
+use Psr\Http\Message\ServerRequestInterface;
 
 // A null key defaults to the resolved client IP; the scope filter restricts the
 // throttle to mutating methods.

@@ -190,6 +190,8 @@ $config->throttles->add(
 ### Per-Role Rate Limits
 
 ```php
+use Psr\Http\Message\ServerRequestInterface;
+
 // Admins get 100 req/min, regular users get 5 req/min.
 // No key argument: the rule keys on the resolved client IP by default.
 $config->throttles->add(
