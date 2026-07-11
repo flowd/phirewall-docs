@@ -1758,7 +1758,7 @@ $config->blocklists->ip('known-bad', ['198.51.100.0/24', '203.0.113.0/24']);
 
 // Auto-ban persistent probers by volume: any client that keeps hitting
 // after passing the safelist and blocklist layers is banned after 10
-// requests in a minute. (A Fail2Ban `fn => true` filter would block every
+// requests in a minute. (A Fail2Ban `fn($req) => true` filter would block every
 // request from 0.8, so a volume cap belongs in Allow2Ban.)
 $config->allow2ban->add('persistent-scanner',
     threshold: 10, period: 60, banSeconds: 86400,

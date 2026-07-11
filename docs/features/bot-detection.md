@@ -342,7 +342,7 @@ $config->blocklists->add('scanner-paths', function ($req): bool {
 //    coarse volume cap. Keep this cap well above the throttle limit below so
 //    it only catches sustained abuse, not a normal page load (one HTML
 //    document plus its assets is easily more than a handful of requests).
-//    (A Fail2Ban `fn => true` filter would block every request from 0.8, so a
+//    (A Fail2Ban `fn($req) => true` filter would block every request from 0.8, so a
 //    volume cap belongs in Allow2Ban.)
 $config->allow2ban->add('persistent-scanner',
     threshold: 600, period: 60, banSeconds: 86400,
