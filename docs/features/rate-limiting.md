@@ -130,6 +130,8 @@ A request is blocked if it exceeds **any** of the windows. This catches both rap
 ### Practical Multi-Window Examples
 
 ```php
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+
 // API with generous sustained limits but strict burst protection
 $config->throttles->multi('public-api', [
     1   => 5,      // 5 req/s burst

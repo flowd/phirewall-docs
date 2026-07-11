@@ -318,6 +318,9 @@ $config->throttles->sliding('api',
 Apply different limits based on subscription tier:
 
 ```php
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+use Psr\Http\Message\ServerRequestInterface;
+
 // Anonymous callers fall back to their client IP; resolve it through the
 // trusted-proxy resolver instead of the raw REMOTE_ADDR peer address.
 $proxy = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
@@ -395,6 +398,9 @@ A throttle, fail2ban, or allow2ban rule keyed on a request header (`X-Api-Key`, 
 Apply stricter limits to resource-intensive endpoints:
 
 ```php
+use Flowd\Phirewall\Http\TrustedProxyResolver;
+use Psr\Http\Message\ServerRequestInterface;
+
 // Anonymous callers fall back to their client IP; resolve it through the
 // trusted-proxy resolver instead of the raw REMOTE_ADDR peer address.
 $proxy = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
