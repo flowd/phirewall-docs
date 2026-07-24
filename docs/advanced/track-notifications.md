@@ -187,7 +187,7 @@ Phirewall dispatches events for every significant decision. You can listen for a
 | `PerformanceMeasured` | Every firewall decision (for metrics) | `decisionPath`, `durationMicros`, `ruleName` |
 | `FirewallError` | An exception occurs in fail-open mode | `exception`, `serverRequest` |
 
-All event classes live in the `Flowd\Phirewall\Events` namespace and are `readonly`.
+All event classes live in the `Flowd\Phirewall\Events` namespace and are `readonly`. The matcher-carried events also expose a `?MatchResult $matchResult` with the match that triggered them (see [Observability](/advanced/observability#event-summary)).
 
 ## Notification Examples
 
