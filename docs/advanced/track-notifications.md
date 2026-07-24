@@ -181,7 +181,9 @@ Phirewall dispatches events for every significant decision. You can listen for a
 | `ThrottleExceeded` | A rate limit is exceeded | `rule`, `key`, `limit`, `period`, `count`, `retryAfter`, `serverRequest` |
 | `Fail2BanMatched` | A Fail2Ban filter match is blocked below the threshold | `rule`, `key`, `threshold`, `period`, `count`, `serverRequest` |
 | `Fail2BanBanned` | A client is banned by Fail2Ban | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `Fail2BanBlocked` | A request from a key already banned by Fail2Ban is blocked | `rule`, `key`, `serverRequest` |
 | `Allow2BanBanned` | A client is banned by Allow2Ban | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `Allow2BanBlocked` | A request from a key already banned by Allow2Ban is blocked | `rule`, `key`, `serverRequest` |
 | `PerformanceMeasured` | Every firewall decision (for metrics) | `decisionPath`, `durationMicros`, `ruleName` |
 | `FirewallError` | An exception occurs in fail-open mode | `exception`, `serverRequest` |
 

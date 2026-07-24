@@ -95,7 +95,7 @@ Checks blocklist rules. On the first match, dispatches `BlocklistMatched`, sets 
 
 For each fail2ban rule:
 
-1. Checks if the key is already banned - if so, returns a blocked result immediately
+1. Checks if the key is already banned - if so, dispatches `Fail2BanBlocked` and returns a blocked result immediately
 2. If the filter matches, increments the failure counter and blocks the request (`403`). A match below the threshold sets `DecisionPath::Fail2BanMatched` and dispatches `Fail2BanMatched`; the Nth match additionally bans the key, sets `DecisionPath::Fail2BanBanned`, and dispatches `Fail2BanBanned` (never both events)
 
 The pre-handler path (during `decide()`) blocks on every match and bans at the threshold. The post-handler path (via `processRecordedSignal()`) shares the same `count >= threshold` ban comparison but never blocks the current request and never dispatches `Fail2BanMatched`. The ban fires on the Nth match, consistent with Allow2Ban.
@@ -114,7 +114,7 @@ For each throttle rule:
 
 Unlike other evaluators, Allow2BanEvaluator **processes all rules before returning**. For each allow2ban rule:
 
-1. If the key is already banned, records the block (regardless of the filter)
+1. If the key is already banned, records the block (regardless of the filter); the rule that captures the block dispatches `Allow2BanBlocked`
 2. Otherwise, if the rule has a filter that does not match, skips the rule (not counted)
 3. Otherwise, increments the counter and bans if the threshold is reached (`count >= threshold`); the matching request itself passes until it is the one that reaches the threshold
 
