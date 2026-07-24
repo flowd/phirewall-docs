@@ -34,7 +34,9 @@ All events are dispatched **synchronously** during request processing. Every eve
 | `ThrottleExceeded` | Request exceeds a throttle limit | `rule`, `key`, `limit`, `period`, `count`, `retryAfter`, `serverRequest` |
 | `Fail2BanMatched` | Fail2Ban filter matches and blocks a request below the ban threshold | `rule`, `key`, `threshold`, `period`, `count`, `serverRequest` |
 | `Fail2BanBanned` | Key banned after reaching the failure threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `Fail2BanBlocked` | Request blocked because its key is already banned by Fail2Ban | `rule`, `key`, `serverRequest` |
 | `Allow2BanBanned` | Key banned after exceeding request threshold | `rule`, `key`, `threshold`, `period`, `banSeconds`, `count`, `serverRequest` |
+| `Allow2BanBlocked` | Request blocked because its key is already banned by Allow2Ban | `rule`, `key`, `serverRequest` |
 | `TrackHit` | Tracking rule filter matches | `rule`, `key`, `period`, `count`, `limit`, `thresholdReached`, `serverRequest` |
 | `FirewallError` | Error in fail-open mode (cache failure, etc.) | `exception`, `serverRequest` |
 | `PerformanceMeasured` | After every firewall decision | `decisionPath`, `durationMicros`, `ruleName` |
@@ -110,6 +112,18 @@ $event->count;          // int - Failure count that triggered the ban
 $event->serverRequest;  // ServerRequestInterface
 ```
 
+### Fail2BanBlocked
+
+Dispatched when a request is blocked because its key is already banned by a Fail2Ban rule. The filter is not evaluated for banned keys, and the event fires on **every** blocked request, so a hammering client produces one event per request; aggregate in high-volume listeners.
+
+```php
+use Flowd\Phirewall\Events\Fail2BanBlocked;
+
+$event->rule;           // string - Rule name
+$event->key;            // string - Banned key (e.g., IP address)
+$event->serverRequest;  // ServerRequestInterface
+```
+
 ### Allow2BanBanned
 
 Dispatched when an Allow2Ban rule bans a key after the counted-request threshold is reached. Allow2Ban counts every request for a key, or only the requests an optional filter matches, letting matching requests pass until the threshold.
@@ -123,6 +137,18 @@ $event->threshold;      // int - Requests before ban
 $event->period;         // int - Observation window in seconds
 $event->banSeconds;     // int - Ban duration in seconds
 $event->count;          // int - Request count that triggered the ban
+$event->serverRequest;  // ServerRequestInterface
+```
+
+### Allow2BanBlocked
+
+Dispatched when a request is blocked because its key is already banned by an Allow2Ban rule. Banned keys block every request regardless of the rule's filter, and the event fires on **every** blocked request; aggregate in high-volume listeners.
+
+```php
+use Flowd\Phirewall\Events\Allow2BanBlocked;
+
+$event->rule;           // string - Rule name
+$event->key;            // string - Banned key (e.g., IP address)
 $event->serverRequest;  // ServerRequestInterface
 ```
 
@@ -243,6 +269,7 @@ Returns an array organized by category, each with a total and a per-rule breakdo
     'fail2ban_matched'  => ['total' => 4,   'by_rule' => ['scanner-probe' => 4]],
     'fail2ban_banned'   => ['total' => 1,   'by_rule' => ['scanner-probe' => 1]],
     'allow2ban_banned'  => ['total' => 2,   'by_rule' => ['high-volume' => 2]],
+    'allow2ban_blocked' => ['total' => 1,   'by_rule' => ['high-volume' => 1]],
     'track_hit'         => ['total' => 50,  'by_rule' => ['api-calls' => 50]],
     'passed'            => ['total' => 1000, 'by_rule' => []],
 ]
@@ -259,11 +286,12 @@ Returns an array organized by category, each with a total and a per-rule breakdo
 | `fail2ban_banned` | `Fail2BanBanned` | New Fail2Ban bans issued |
 | `fail2ban_blocked` | `PerformanceMeasured` | Requests blocked by existing Fail2Ban bans |
 | `allow2ban_banned` | `Allow2BanBanned` | New Allow2Ban bans issued |
+| `allow2ban_blocked` | `PerformanceMeasured` | Requests blocked by existing Allow2Ban bans |
 | `track_hit` | `TrackHit` | Tracking rule matches |
 | `passed` | `PerformanceMeasured` | Requests that passed all checks |
 
 ::: tip
-The `passed` and `fail2ban_blocked` categories are derived from the `PerformanceMeasured` event, which fires on every request. All other categories come from their dedicated events.
+The `passed`, `fail2ban_blocked` and `allow2ban_blocked` categories are derived from the `PerformanceMeasured` event, which fires on every request. The dedicated `Fail2BanBlocked` and `Allow2BanBlocked` events are intentionally not counted so blocked requests are not double-counted. All other categories come from their dedicated events.
 :::
 
 ### Resetting Counters

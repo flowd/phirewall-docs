@@ -17,7 +17,7 @@ Before 0.8 a filter match below the threshold passed through, so a Fail2Ban filt
 ### How It Works
 
 ```text
-Request --> Is key already banned? --> Yes --> 403 Forbidden
+Request --> Is key already banned? --> Yes --> 403 Forbidden (Fail2BanBlocked event)
                     |
                     No
                     |
@@ -42,7 +42,7 @@ Request --> Is key already banned? --> Yes --> 403 Forbidden
 2. Every match is **blocked with `403`** and counted per **key** (e.g., IP address) within a time **period**
 3. A match **below** the threshold blocks via `DecisionPath::Fail2BanMatched` and dispatches the [`Fail2BanMatched`](#fail2banmatched) event
 4. When the count **reaches** the **threshold**, the key is additionally **banned** for the configured duration; that match blocks via `DecisionPath::Fail2BanBanned` and dispatches [`Fail2BanBanned`](#fail2banbanned) (never both events)
-5. Banned keys then receive `403 Forbidden` immediately, without further rule evaluation
+5. Banned keys then receive `403 Forbidden` immediately, without further rule evaluation; each of these blocks dispatches [`Fail2BanBlocked`](#fail2banblocked)
 
 ### Configuration
 
@@ -309,7 +309,7 @@ Either way, an already-banned key is blocked on **every** request regardless of 
 ### How It Works
 
 ```text
-Request --> Is key already banned? --> Yes --> 403 Forbidden
+Request --> Is key already banned? --> Yes --> 403 Forbidden (Allow2BanBlocked event)
                     |
                     No
                     |
@@ -442,7 +442,7 @@ $config->allow2ban->add(
 | **On a match** | **Blocks immediately** (`403`) and counts | **Lets the request pass** and counts, until the threshold |
 | **Trigger** | Any match (block); Nth match (ban) | Nth counted request (ban) |
 | **Use case** | Unambiguously malicious matches (scanner paths, invalid signatures), signal-only rules | Login brute-force counting, volume abuse, "count these, ban after N" |
-| **Events** | `Fail2BanMatched` (sub-threshold block), `Fail2BanBanned` (ban) | `Allow2BanBanned` (ban) |
+| **Events** | `Fail2BanMatched` (sub-threshold block), `Fail2BanBanned` (ban), `Fail2BanBlocked` (banned-key block) | `Allow2BanBanned` (ban), `Allow2BanBlocked` (banned-key block) |
 | **Ban parameter** | `$ban` | `$banSeconds` |
 
 ## Managing Bans
@@ -487,7 +487,7 @@ Notes:
 
 ## Events
 
-Fail2Ban and Allow2Ban dispatch events through your PSR-14 event dispatcher. Fail2Ban dispatches `Fail2BanMatched` for every match blocked below the threshold and `Fail2BanBanned` for the match that bans (never both for the same request); Allow2Ban dispatches `Allow2BanBanned` when a key is banned.
+Fail2Ban and Allow2Ban dispatch events through your PSR-14 event dispatcher. Fail2Ban dispatches `Fail2BanMatched` for every match blocked below the threshold and `Fail2BanBanned` for the match that bans (never both for the same request); Allow2Ban dispatches `Allow2BanBanned` when a key is banned. A request blocked because its key is **already banned** dispatches `Fail2BanBlocked` or `Allow2BanBlocked`.
 
 ### Fail2BanMatched
 
@@ -520,6 +520,19 @@ $event->count;          // int - Failure count that triggered the ban
 $event->serverRequest;  // ServerRequestInterface
 ```
 
+### Fail2BanBlocked
+
+Dispatched when a request is blocked because its key is already banned. The filter is not evaluated for banned keys, and the event fires on **every** blocked request, so a hammering client produces one event per request.
+
+```php
+use Flowd\Phirewall\Events\Fail2BanBlocked;
+
+// Event properties
+$event->rule;           // string - Rule name
+$event->key;            // string - Banned key (e.g., IP address)
+$event->serverRequest;  // ServerRequestInterface
+```
+
 ### Allow2BanBanned
 
 ```php
@@ -532,6 +545,19 @@ $event->threshold;      // int - Configured threshold
 $event->period;         // int - Observation window (seconds)
 $event->banSeconds;     // int - Ban duration (seconds)
 $event->count;          // int - Request count that triggered the ban
+$event->serverRequest;  // ServerRequestInterface
+```
+
+### Allow2BanBlocked
+
+Dispatched when a request is blocked because its key is already banned. Banned keys block every request regardless of the rule's filter, and the event fires on **every** blocked request.
+
+```php
+use Flowd\Phirewall\Events\Allow2BanBlocked;
+
+// Event properties
+$event->rule;           // string - Rule name
+$event->key;            // string - Banned key
 $event->serverRequest;  // ServerRequestInterface
 ```
 
