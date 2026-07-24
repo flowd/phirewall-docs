@@ -132,7 +132,7 @@ Pattern backends carry a list of entries; each entry has a `PatternKind`:
 |---------|------------------------------|
 | `enableRateLimitHeaders()` | emit `X-RateLimit-*` headers |
 | `enableResponseHeaders()` | emit `X-Phirewall-*` headers |
-| `enableOwaspDiagnosticsHeader()` | emit the OWASP diagnostics header |
+| `enableDiagnosticsHeaders()` | copy matcher-provided diagnostic headers onto blocked responses (`enableOwaspDiagnosticsHeader()` is a deprecated alias) |
 | `setFailOpen(bool)` | fail-open (default) vs fail-closed on backend errors |
 | `setKeyPrefix(prefix)` | cache-key prefix |
 

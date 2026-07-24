@@ -322,13 +322,13 @@ $crs->enable(942100);   // Re-enable it later
 
 ### How do I debug which OWASP rule is blocking a request?
 
-Enable the diagnostics header:
+Enable diagnostic headers:
 
 ```php
-$config->enableOwaspDiagnosticsHeader();
+$config->enableDiagnosticsHeaders();
 ```
 
-This adds an `X-Phirewall-Owasp-Rule` header to blocked responses containing the matched rule ID.
+The CRS matcher attaches an `X-Phirewall-Owasp-Rule` header with the matched rule ID to blocked responses. This works wherever the matcher decides the block: as a blocklist rule and as a fail2ban filter. Any matcher can ship such headers via the `diagnostic_headers` metadata key on its `MatchResult`.
 
 ::: warning
 Only enable this in development or staging. In production, it reveals information about your security rules to potential attackers.
@@ -372,7 +372,7 @@ Common causes:
 Debug steps:
 1. Enable `$config->enableResponseHeaders()` and check the `X-Phirewall` and `X-Phirewall-Matched` response headers to identify the blocking rule
 2. Temporarily disable suspect rules and re-enable them one by one
-3. If OWASP rules are involved, enable `$config->enableOwaspDiagnosticsHeader()` to see which rule ID matched
+3. If OWASP rules are involved, enable `$config->enableDiagnosticsHeaders()` to see which rule ID matched
 
 ### Rate limits are not working in PHP-FPM
 
@@ -386,7 +386,7 @@ Enable `$config->enableResponseHeaders()` and check the response headers on bloc
 |--------|-------|
 | `X-Phirewall` | Block type: `blocklist`, `throttle`, `fail2ban`, or `allow2ban` |
 | `X-Phirewall-Matched` | Name of the rule that triggered the block |
-| `X-Phirewall-Owasp-Rule` | OWASP rule ID (only if diagnostics are enabled) |
+| `X-Phirewall-Owasp-Rule` | OWASP rule ID (only if `enableDiagnosticsHeaders()` is active) |
 
 ::: info
 These headers are disabled by default. Call `$config->enableResponseHeaders()` to enable them for debugging.

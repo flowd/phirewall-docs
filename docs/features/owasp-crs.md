@@ -282,11 +282,11 @@ $rule = $rules->getRule(942100);
 
 ## OWASP Diagnostics Header
 
-Enable the diagnostics header to see which OWASP rule matched:
+Enable diagnostic headers to see which OWASP rule matched:
 
 ```php
 $config->enableResponseHeaders();
-$config->enableOwaspDiagnosticsHeader();
+$config->enableDiagnosticsHeaders();
 ```
 
 When an OWASP rule blocks a request, the response includes:
@@ -298,7 +298,7 @@ X-Phirewall-Owasp-Rule: 942100
 ```
 
 ::: info
-`X-Phirewall` and `X-Phirewall-Matched` require `enableResponseHeaders()`. The `X-Phirewall-Owasp-Rule` header is controlled independently by `enableOwaspDiagnosticsHeader()`.
+`X-Phirewall` and `X-Phirewall-Matched` require `enableResponseHeaders()`. The `X-Phirewall-Owasp-Rule` header is controlled independently by `enableDiagnosticsHeaders()` (`enableOwaspDiagnosticsHeader()` is a deprecated alias): the CRS matcher declares it via the generic `diagnostic_headers` metadata key on its `MatchResult`, so it also appears when the matcher is used as a fail2ban filter.
 :::
 
 ::: info

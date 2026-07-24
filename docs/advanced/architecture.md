@@ -66,7 +66,7 @@ The `EvaluationContext` is a mutable transport object that carries shared config
 | `normalize` | `Closure(string): string` | Discriminator key normalizer |
 | `responseHeadersEnabled` | `bool` | Whether `X-Phirewall` headers are active |
 | `rateLimitHeadersEnabled` | `bool` | Whether `X-RateLimit-*` headers are active |
-| `owaspDiagnosticsHeaderEnabled` | `bool` | Whether `X-Phirewall-Owasp-Rule` header is active |
+| `diagnosticsHeadersEnabled` | `bool` | Whether matcher-provided diagnostic headers are copied onto blocked responses |
 | `counter` | `FixedWindowCounter` | Shared counter for fail2ban, allow2ban, and track rules |
 | `decisionPath` | `DecisionPath` | Updated by evaluators to record which stage decided |
 | `decisionRule` | `?string` | Updated by evaluators to record the matching rule name |
@@ -89,7 +89,7 @@ Checks safelist rules. On the first match, dispatches `SafelistMatched`, sets th
 
 ### BlocklistEvaluator
 
-Checks blocklist rules. On the first match, dispatches `BlocklistMatched`, sets the decision path to `Blocklisted`, and returns `FirewallResult::blocked()`. For OWASP-sourced rules, includes the `X-Phirewall-Owasp-Rule` diagnostic header when enabled.
+Checks blocklist rules. On the first match, dispatches `BlocklistMatched`, sets the decision path to `Blocklisted`, and returns `FirewallResult::blocked()`. Diagnostic headers the matcher declared in its `MatchResult` metadata (`diagnostic_headers`) are copied onto the response when `enableDiagnosticsHeaders()` is active.
 
 ### Fail2BanEvaluator
 
