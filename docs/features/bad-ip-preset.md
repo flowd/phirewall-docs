@@ -29,6 +29,17 @@ $config = (new Config($cache))->with(Presets::blocklist());
 | `Presets::blocklist()` | Blocks requests whose client IP is in the bundled snapshot. |
 | `Presets::track(period)` | Counts matches without blocking, to measure false positives first. |
 
+The preset loads its ~18k-address snapshot lazily on the first request. Parsing the list and compiling it into IP lookup tables costs a few milliseconds; give the `Config` a compiled-data cache and both steps are served from OPcache-backed artifacts instead, re-parsed only when the data file changes:
+
+```php
+use Flowd\Phirewall\Support\CompiledDataCache;
+
+$config->setCompiledDataCache(new CompiledDataCache('/path/to/var/cache/phirewall'));
+$config = $config->with(Presets::blocklist());
+```
+
+See [Presets › Caching expensive preset data](/advanced/presets#caching-expensive-preset-data).
+
 ## Updating the list
 
 The snapshot is stamparm/ipsum `levels/3.txt` (addresses on at least three source blacklists),
