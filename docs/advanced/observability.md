@@ -43,6 +43,8 @@ All events are dispatched **synchronously** during request processing. Every eve
 
 All event classes live in the `Flowd\Phirewall\Events` namespace and are `readonly`.
 
+Every matcher-carried event (`SafelistMatched`, `BlocklistMatched`, `ThrottleExceeded`, `TrackHit`, `Fail2BanMatched`, `Fail2BanBanned`, `Allow2BanBanned`) additionally exposes a `MatchResult $matchResult` property with the match (or filter/scope match) that triggered it. It is nullable only on `ThrottleExceeded`, `Fail2BanBanned` and `Allow2BanBanned`, where no matcher may have run (unscoped throttles, post-handler `recordFailure()`/`recordHit()` signals, filterless Allow2Ban rules). Listeners can read matcher metadata such as `diagnostic_headers` from it without enabling the attacker-visible response headers.
+
 ### SafelistMatched
 
 Dispatched when a request matches a safelist rule. The request bypasses all remaining checks.

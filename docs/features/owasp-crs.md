@@ -42,9 +42,9 @@ $config = new Config(new InMemoryCache());
 $config = $config->with(Presets::blocklist(ParanoiaLevel::Level1));
 ```
 
-Want to also ban repeat offenders? Use the fail2ban preset instead. A CRS
+Want to also ban repeat offenders? Use the Fail2Ban preset instead. A CRS
 match is malicious by definition, so from 0.8 both presets block every match
-with `403`; the difference is that the fail2ban preset additionally **bans**
+with `403`; the difference is that the Fail2Ban preset additionally **bans**
 the key after the threshold. A banned attacker is then blocked by a cheap ban
 lookup (the CRS engine no longer runs for them), and the ban is observable via
 `Fail2BanBanned` and mirrorable to your web server:
@@ -282,11 +282,11 @@ $rule = $rules->getRule(942100);
 
 ## OWASP Diagnostics Header
 
-Enable the diagnostics header to see which OWASP rule matched:
+Enable response and diagnostic headers to see which OWASP rule matched:
 
 ```php
 $config->enableResponseHeaders();
-$config->enableOwaspDiagnosticsHeader();
+$config->enableDiagnosticsHeaders();
 ```
 
 When an OWASP rule blocks a request, the response includes:
@@ -298,7 +298,7 @@ X-Phirewall-Owasp-Rule: 942100
 ```
 
 ::: info
-`X-Phirewall` and `X-Phirewall-Matched` require `enableResponseHeaders()`. The `X-Phirewall-Owasp-Rule` header is controlled independently by `enableOwaspDiagnosticsHeader()`.
+`X-Phirewall` and `X-Phirewall-Matched` require `enableResponseHeaders()`. The `X-Phirewall-Owasp-Rule` header is controlled independently by `enableDiagnosticsHeaders()` (`enableOwaspDiagnosticsHeader()` is a deprecated alias): the CRS matcher declares it via the generic `diagnostic_headers` metadata key on its `MatchResult`, so it also appears when the matcher is used as a Fail2Ban filter.
 :::
 
 ::: info
