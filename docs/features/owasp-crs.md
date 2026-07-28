@@ -282,7 +282,7 @@ $rule = $rules->getRule(942100);
 
 ## OWASP Diagnostics Header
 
-Enable diagnostic headers to see which OWASP rule matched:
+Enable response and diagnostic headers to see which OWASP rule matched:
 
 ```php
 $config->enableResponseHeaders();
