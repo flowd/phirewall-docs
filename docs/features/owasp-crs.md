@@ -548,7 +548,24 @@ final readonly class RequestBodyCollector implements VariableCollectorInterface
 
 ### Caching
 
-Each operator evaluator and variable collector is instantiated once per rule at construction time and reused across requests. Regular expressions are compiled on first use (with PCRE's internal JIT cache), phrase lists from `@pmFromFile` are loaded and cached per file path, and all other operators use simple string operations with no additional overhead. There is no need to cache the `CoreRuleSet` externally.
+Each operator evaluator and variable collector is instantiated once per rule at construction time and reused across requests. Regular expressions are compiled on first use (with PCRE's internal JIT cache), phrase lists from `@pmFromFile` are loaded and cached per file path, and all other operators use simple string operations with no additional overhead.
+
+What *is* worth caching is the one-time cost of **parsing** the rule files into the `CoreRuleSet` - several milliseconds that, under PHP-FPM, would otherwise be paid on every request. Build the matcher with the lazy factory and give the `Config` a compiled-data cache; the parsed rules are then served from an OPcache-backed artifact and re-parsed only when a rule file changes:
+
+```php
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
+use Flowd\Phirewall\Support\CompiledDataCache;
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
+
+$config->setCompiledDataCache(new CompiledDataCache('/path/to/var/cache/phirewall'));
+
+$matcher = CoreRuleSetMatcher::fromRuleFiles(ParanoiaLevel::Level1);
+$matcher->disable(942100); // toggles before the first request are queued
+$config->blocklists->addRule(new BlocklistRule('owasp', $matcher));
+```
+
+`Presets::blocklist()` and `Presets::fail2ban()` already build lazily, so they pick up the cache automatically. A matcher constructed eagerly with an already parsed `CoreRuleSet` keeps parsing at construction and ignores the cache. See [Presets › Caching expensive preset data](/advanced/presets#caching-expensive-preset-data).
 
 ### Operator Performance
 
