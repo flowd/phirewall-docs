@@ -185,7 +185,7 @@ $context?->recordFailure('login-failures');
 
 The second argument to `recordFailure()` is optional; when omitted, the firewall extracts the discriminator key from the rule's own `keyExtractor`. The matching Fail2Ban rule should use `filter: fn($request): bool => false` so it only counts failures signaled programmatically.
 
-For allow2ban rules, use `$context->recordHit('rule-name')`, same shape, routed through the allow2ban evaluator instead.
+For Allow2Ban rules, use `$context->recordHit('rule-name')`, same shape, routed through the Allow2Ban evaluator instead.
 
 ## Rate Limiting
 
@@ -328,7 +328,7 @@ Enable diagnostic headers:
 $config->enableDiagnosticsHeaders();
 ```
 
-The CRS matcher attaches an `X-Phirewall-Owasp-Rule` header with the matched rule ID to blocked responses. This works wherever the matcher decides the block: as a blocklist rule and as a fail2ban filter. Any matcher can ship such headers via the `diagnostic_headers` metadata key on its `MatchResult`.
+The CRS matcher attaches an `X-Phirewall-Owasp-Rule` header with the matched rule ID to blocked responses. This works wherever the matcher decides the block: as a blocklist rule and as a Fail2Ban filter. Any matcher can ship such headers via the `diagnostic_headers` metadata key on its `MatchResult`.
 
 ::: warning
 Only enable this in development or staging. In production, it reveals information about your security rules to potential attackers.

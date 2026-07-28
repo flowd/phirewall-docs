@@ -67,7 +67,7 @@ The `EvaluationContext` is a mutable transport object that carries shared config
 | `responseHeadersEnabled` | `bool` | Whether `X-Phirewall` headers are active |
 | `rateLimitHeadersEnabled` | `bool` | Whether `X-RateLimit-*` headers are active |
 | `diagnosticsHeadersEnabled` | `bool` | Whether matcher-provided diagnostic headers are copied onto blocked responses |
-| `counter` | `FixedWindowCounter` | Shared counter for fail2ban, allow2ban, and track rules |
+| `counter` | `FixedWindowCounter` | Shared counter for Fail2Ban, Allow2Ban, and track rules |
 | `decisionPath` | `DecisionPath` | Updated by evaluators to record which stage decided |
 | `decisionRule` | `?string` | Updated by evaluators to record the matching rule name |
 | `pendingRateLimitHeaders` | `?array` | Rate-limit headers captured by `ThrottleEvaluator` for pass-through responses |
@@ -93,7 +93,7 @@ Checks blocklist rules. On the first match, dispatches `BlocklistMatched`, sets 
 
 ### Fail2BanEvaluator
 
-For each fail2ban rule:
+For each Fail2Ban rule:
 
 1. Checks if the key is already banned - if so, dispatches `Fail2BanBlocked` and returns a blocked result immediately
 2. If the filter matches, increments the failure counter and blocks the request (`403`). A match below the threshold sets `DecisionPath::Fail2BanMatched` and dispatches `Fail2BanMatched`; the Nth match additionally bans the key, sets `DecisionPath::Fail2BanBanned`, and dispatches `Fail2BanBanned` (never both events)
@@ -112,7 +112,7 @@ For each throttle rule:
 
 ### Allow2BanEvaluator
 
-Unlike other evaluators, Allow2BanEvaluator **processes all rules before returning**. For each allow2ban rule:
+Unlike other evaluators, Allow2BanEvaluator **processes all rules before returning**. For each Allow2Ban rule:
 
 1. If the key is already banned, records the block (regardless of the filter); the rule that captures the block dispatches `Allow2BanBlocked`
 2. Otherwise, if the rule has a filter that does not match, skips the rule (not counted)

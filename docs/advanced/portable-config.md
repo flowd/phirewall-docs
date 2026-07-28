@@ -72,7 +72,7 @@ Everything `PortableConfig` can express today.
 | Factory | Matches when … |
 |---------|----------------|
 | `filterAll()` | always |
-| `filterNone()` | never: a filter that never matches; use it for a rule that must not be assertable from any request property (e.g. a fail2ban driven solely by `RequestContext::recordFailure`) |
+| `filterNone()` | never: a filter that never matches; use it for a rule that must not be assertable from any request property (e.g. a Fail2Ban rule driven solely by `RequestContext::recordFailure`) |
 | `filterPathEquals(path)` | the path equals `path` |
 | `filterPathPrefix(prefix)` | the path starts with `prefix` |
 | `filterPathRegex(pattern)` | the path matches the PCRE `pattern` (delimiters included) |
@@ -88,7 +88,7 @@ Everything `PortableConfig` can express today.
 `filterIp`, `filterKnownScanners`, and `filterSuspiciousHeaders` compile to the dedicated matcher classes (so you get their diagnostics and CIDR handling); the remaining filters compile to a request-predicate closure.
 
 ::: warning
-`filterHeaderEquals`, `filterHeaderPresent`, and `filterHeaderRegex` are rejected on `safelist()` (and on `fromArray()` deserialize): a client-controlled header value would be a forgeable bypass token (anyone presenting it skips every downstream rule). They remain valid on blocklists, throttles, fail2ban, allow2ban, and track rules.
+`filterHeaderEquals`, `filterHeaderPresent`, and `filterHeaderRegex` are rejected on `safelist()` (and on `fromArray()` deserialize): a client-controlled header value would be a forgeable bypass token (anyone presenting it skips every downstream rule). They remain valid on blocklists, throttles, Fail2Ban, Allow2Ban, and track rules.
 :::
 
 ### Key extractors
