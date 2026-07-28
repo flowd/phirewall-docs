@@ -553,8 +553,10 @@ Each operator evaluator and variable collector is instantiated once per rule at 
 What *is* worth caching is the one-time cost of **parsing** the rule files into the `CoreRuleSet` - several milliseconds that, under PHP-FPM, would otherwise be paid on every request. Build the matcher with the lazy factory and give the `Config` a compiled-data cache; the parsed rules are then served from an OPcache-backed artifact and re-parsed only when a rule file changes:
 
 ```php
+use Flowd\Phirewall\Config\Rule\BlocklistRule;
 use Flowd\Phirewall\Support\CompiledDataCache;
 use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
 
 $config->setCompiledDataCache(new CompiledDataCache('/path/to/var/cache/phirewall'));
 

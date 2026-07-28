@@ -65,7 +65,7 @@ Fetching `$latestFromYourFeed` is the integrator's job; phirewall hardcodes no r
 
 ## Caching expensive preset data
 
-This section only matters when you build a preset that parses a large data source on construction - a rule-set file, an IP feed. The shipped presets parse no such sources and need no cache. Because a `Config` is built on every request under PHP-FPM, such parsing would run per request; `Flowd\Phirewall\Support\CompiledDataCache` removes that cost with a two-level cache for `var_export`-able plain data:
+This section only matters when a preset parses a large data source on construction - a rule-set file, an IP feed. phirewall's own presets parse no such sources and need no cache; the companion preset packages that do - OWASP CRS rule files, the bad-IP snapshot - use exactly this mechanism. Because a `Config` is built on every request under PHP-FPM, such parsing would run per request; `Flowd\Phirewall\Support\CompiledDataCache` removes that cost with a two-level cache for `var_export`-able plain data:
 
 ```php
 use Flowd\Phirewall\Support\CompiledDataCache;

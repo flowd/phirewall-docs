@@ -33,6 +33,7 @@ The preset loads its ~18k-address snapshot lazily on the first request. Parsing 
 
 ```php
 use Flowd\Phirewall\Support\CompiledDataCache;
+use Flowd\PhirewallPresetBadIps\Presets;
 
 $config->setCompiledDataCache(new CompiledDataCache('/path/to/var/cache/phirewall'));
 $config = $config->with(Presets::blocklist());
