@@ -25,8 +25,8 @@ export default defineConfig({
         link: 'https://flowd.de'
       },
       {
-        text: 'v0.8.0',
-        link: 'https://github.com/flowd/phirewall/releases/tag/0.8.0'
+        text: 'v0.9.0',
+        link: 'https://github.com/flowd/phirewall/releases/tag/0.9.0'
       }
     ],
 
