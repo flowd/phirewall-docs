@@ -974,8 +974,6 @@ Tiered per-client-IP rate limits for an API, with a tighter cap on an expensive 
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
@@ -997,15 +995,11 @@ $config->throttles->add('global',
     limit: 1000, period: 60,
 );
 
-// Expensive endpoint limit. Null key defaults to the resolved client IP;
-// the scope restricts the throttle to the search endpoint.
-$config->throttles->addRule(new ThrottleRule(
-    'search',
-    limit: 20,
-    period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/api/search'),
-));
+// Expensive endpoint limit. The scope restricts the throttle to the search
+// endpoint; the keyless rule counts per resolved client IP.
+$config->throttles->add('search', limit: 20, period: 60,
+    scope: fn($req): bool => $req->getUri()->getPath() === '/api/search',
+);
 ```
 
 ---
@@ -1083,8 +1077,6 @@ Complete login protection with throttling, Fail2Ban, and tracking.
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Store\RedisCache;
 use Predis\Client as PredisClient;
@@ -1120,28 +1112,20 @@ $config->safelists->add('health',
     fn($req) => $req->getUri()->getPath() === '/health'
 );
 
-// Throttle login attempts: 10 per minute per client IP. Null key defaults to
-// the resolved client IP; the scope restricts the throttle to login POSTs.
-$config->throttles->addRule(new ThrottleRule(
-    'login-rate',
+// Throttle login attempts: 10 per minute per client IP. The scope restricts
+// the throttle to login POSTs; the keyless rule counts per resolved client IP.
+$config->throttles->add('login-rate',
     limit: 10,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(
-        fn($req): bool => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST'
-    ),
-));
+    scope: fn($req): bool => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST',
+);
 
 // Burst detection: 3 login attempts in 10 seconds
-$config->throttles->addRule(new ThrottleRule(
-    'login-burst',
+$config->throttles->add('login-burst',
     limit: 3,
     period: 10,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(
-        fn($req): bool => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST'
-    ),
-));
+    scope: fn($req): bool => $req->getUri()->getPath() === '/login' && $req->getMethod() === 'POST',
+);
 
 // Allow2Ban: ban after 5 login attempts in 5 minutes. Login POSTs are
 // legitimate, so they pass until the threshold (a Fail2Ban filter would
@@ -1443,9 +1427,7 @@ A production configuration combining safelists, blocklists, OWASP rules, bot det
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
@@ -1556,23 +1538,17 @@ $config->throttles->add('burst',
     limit: 50, period: 5,
 );
 
-$config->throttles->addRule(new ThrottleRule(
-    'write-ops',
+$config->throttles->add('write-ops',
     limit: 100,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(
-        fn($req): bool => in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
-    ),
-));
+    scope: fn($req): bool => in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true),
+);
 
-$config->throttles->addRule(new ThrottleRule(
-    'login',
+$config->throttles->add('login',
     limit: 10,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/login'),
-));
+    scope: fn($req): bool => $req->getUri()->getPath() === '/login',
+);
 
 // === CUSTOM RESPONSES ===
 $config->blocklistedResponseFactory = new ClosureBlocklistedResponseFactory(

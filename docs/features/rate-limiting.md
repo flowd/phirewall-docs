@@ -27,7 +27,8 @@ $config->throttles->add(
     string $name,
     int|Closure $limit,
     int|Closure $period,
-    ?Closure $key = null
+    ?Closure $key = null,
+    ?Closure $scope = null
 ): ThrottleSection
 ```
 
@@ -37,13 +38,19 @@ $config->throttles->add(
 | `$limit` | `int\|Closure` | Max requests per window, or a [dynamic closure](#dynamic-limits) |
 | `$period` | `int\|Closure` | Window size in seconds, or a [dynamic closure](#dynamic-limits) |
 | `$key` | `?Closure` | `fn(ServerRequestInterface): ?string`, return a key to group by, or `null` to skip. Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
+| `$scope` | `?Closure` | `fn(ServerRequestInterface): bool`, restricts which requests the throttle counts; non-matching requests skip the rule. Omit to count every request. |
 
 ```php
 // 100 requests per minute per IP
 $config->throttles->add('ip-limit', limit: 100, period: 60);
+
+// Path-scoped: only /search requests count, still per client IP
+$config->throttles->add('search', limit: 10, period: 60,
+    scope: fn($req) => $req->getUri()->getPath() === '/search',
+);
 ```
 
-When the key closure returns `null`, the rule is skipped for that request. This lets you apply throttles conditionally, only to certain paths, methods, or user types.
+Use `scope` to apply a throttle conditionally, only to certain paths, methods, or user types: the key stays omitted, so matching requests are counted per resolved client IP. A key closure that returns `null` also skips the rule for that request; reach for that form only when the rule keys on something other than the client IP (a header, a username, and so on).
 
 ```text
 Window 1 (00:00-00:59)    Window 2 (01:00-01:59)    Window 3 (02:00-02:59)
@@ -63,7 +70,8 @@ $config->throttles->sliding(
     string $name,
     int|Closure $limit,
     int|Closure $period,
-    ?Closure $key = null
+    ?Closure $key = null,
+    ?Closure $scope = null
 ): ThrottleSection
 ```
 
@@ -105,7 +113,8 @@ The `multi()` method registers multiple throttle windows under a single logical 
 $config->throttles->multi(
     string $name,
     array $windowLimits,
-    ?Closure $key = null
+    ?Closure $key = null,
+    ?Closure $scope = null
 ): ThrottleSection
 ```
 
@@ -114,6 +123,7 @@ $config->throttles->multi(
 | `$name` | `string` | Logical name prefix |
 | `$windowLimits` | `array<int, int>` | Map of period (seconds) => limit (max requests) |
 | `$key` | `?Closure` | Key extractor closure (shared across all windows). Omit to default to the client IP (Config IP resolver, else REMOTE_ADDR). |
+| `$scope` | `?Closure` | Scope filter (shared across all windows); non-matching requests skip every window. |
 
 Each entry creates a sub-rule named `{$name}:{$period}s`. Windows are evaluated shortest-first (burst before sustained).
 
@@ -130,8 +140,6 @@ A request is blocked if it exceeds **any** of the windows. This catches both rap
 ### Practical Multi-Window Examples
 
 ```php
-use Flowd\Phirewall\Http\TrustedProxyResolver;
-
 // API with generous sustained limits but strict burst protection
 $config->throttles->multi('public-api', [
     1   => 5,      // 5 req/s burst
@@ -139,19 +147,13 @@ $config->throttles->multi('public-api', [
     3600 => 5000,  // 5000 req/hour daily budget
 ]);
 
-// Login endpoint with tight controls. multi() shares one key closure across
-// its windows and has to scope by path, so resolve the client IP in the
-// closure (the same TrustedProxyResolver you pass to setIpResolver) instead of
-// reading the raw REMOTE_ADDR peer address, which collapses onto the proxy.
-$proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
-
+// Login endpoint with tight controls: the scope restricts counting to the
+// login path (shared across all windows), and the keyless rule counts per
+// client IP through the Config IP resolver.
 $config->throttles->multi('login', [
     60  => 5,      // 5 attempts/min
     3600 => 20,    // 20 attempts/hour
-], fn($req) => $req->getUri()->getPath() === '/login'
-    ? $proxyResolver->resolve($req)
-    : null
-);
+], scope: fn($req) => $req->getUri()->getPath() === '/login');
 ```
 
 ## Dynamic Limits
@@ -243,16 +245,6 @@ Prefer `hashedHeader()` over `header()` whenever the header carries a credential
 Write your own closure for any logic:
 
 ```php
-// Only rate limit login attempts
-$config->throttles->add('login-rate', limit: 10, period: 60,
-    key: function ($req): ?string {
-        if ($req->getUri()->getPath() === '/login') {
-            return $req->getServerParams()['REMOTE_ADDR'] ?? null;
-        }
-        return null; // Skip non-login requests
-    }
-);
-
 // Composite key: IP + path
 $config->throttles->add('per-endpoint', limit: 50, period: 60,
     key: function ($req): ?string {
@@ -263,7 +255,7 @@ $config->throttles->add('per-endpoint', limit: 50, period: 60,
 ```
 
 ::: tip
-These snippets read `REMOTE_ADDR` directly to keep the closures short. In production behind a proxy, derive the IP part from your `TrustedProxyResolver` (`$proxyResolver->resolve($req)`) so it is the real client IP, not the proxy peer address.
+This snippet reads `REMOTE_ADDR` directly to keep the closure short. In production behind a proxy, derive the IP part from your `TrustedProxyResolver` (`$proxyResolver->resolve($req)`) so it is the real client IP, not the proxy peer address. And to rate limit only certain requests while keeping the default client IP key, use `scope:` instead of a null-returning key closure (see [Fixed Window Throttle](#fixed-window-throttle)).
 :::
 
 ## Tiered Rate Limits
@@ -271,8 +263,6 @@ These snippets read `REMOTE_ADDR` directly to keep the closures short. In produc
 Define multiple throttle rules with different limits for different use cases. All rules are evaluated independently; a request must satisfy all of them.
 
 ```php
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 
 $proxyResolver = new TrustedProxyResolver([
@@ -287,26 +277,16 @@ $config->throttles->add('global-ip',
     limit: 1000, period: 60,
 );
 
-// Tier 2: Stricter limit for write operations. Null key defaults to the
-// resolved client IP; the scope restricts the throttle to mutating methods.
-$config->throttles->addRule(new ThrottleRule(
-    'write-operations',
-    limit: 100,
-    period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(
-        fn($req): bool => in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
-    ),
-));
+// Tier 2: Stricter limit for write operations. The scope restricts the
+// throttle to mutating methods; the keyless rule counts per client IP.
+$config->throttles->add('write-operations', limit: 100, period: 60,
+    scope: fn($req): bool => in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true),
+);
 
 // Tier 3: Per-endpoint limit for expensive operations
-$config->throttles->addRule(new ThrottleRule(
-    'search-endpoint',
-    limit: 20,
-    period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/api/search'),
-));
+$config->throttles->add('search-endpoint', limit: 20, period: 60,
+    scope: fn($req): bool => $req->getUri()->getPath() === '/api/search',
+);
 ```
 
 ## Per-User Limits
