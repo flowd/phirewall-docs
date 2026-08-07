@@ -55,6 +55,7 @@ export default defineConfig({
         text: 'Advanced',
         items: [
           { text: 'Architecture', link: '/advanced/architecture' },
+          { text: 'Performance', link: '/advanced/performance' },
           { text: 'Dynamic Throttle & Sliding Window', link: '/advanced/dynamic-throttle' },
           { text: 'Request Context', link: '/advanced/request-context' },
           { text: 'Portable Config', link: '/advanced/portable-config' },
