@@ -117,6 +117,8 @@ To switch to fail-closed mode (exceptions propagate, resulting in a 500 error):
 $config->setFailOpen(false);
 ```
 
+The policy also decides how pattern-blocklist regexes handle a PCRE engine error at match time: no match under fail-open, a match (block) under fail-closed.
+
 ::: warning
 In fail-open mode, a down cache means firewall rules are not being enforced. Monitor your cache backend health and alert on `FirewallError` events. See [Observability](/advanced/observability) for monitoring setup.
 :::

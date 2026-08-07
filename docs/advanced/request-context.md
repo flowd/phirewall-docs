@@ -46,6 +46,8 @@ Here is what happens step by step:
 5. After your handler returns a response, the middleware processes each recorded signal through the matching counter engine (fail2ban or allow2ban)
 6. If the count crosses the threshold, the key is banned for future requests
 
+By default the banning signal never changes the current response: the handler's response is delivered as-is and the ban takes effect from the next request. Opt in to a 403 for the banning request itself with `$config->enableBlockOnSignalBan()` (portable option `blockOnSignalBan`) - the middleware then replaces the handler response with the regular blocked response, including `Retry-After` for allow2ban bans. The handler has already run at that point, so this only swaps the outgoing response; it does not undo the handler's work.
+
 ## Setup
 
 Configure a fail2ban rule with a filter that **always returns `false`**. This means the firewall never counts failures automatically; your handler does it instead:
