@@ -324,7 +324,7 @@ $config->throttles->add('api-limit', limit: 100, period: 60,
 );
 ```
 
-For a matcher-backed scope (an `IpMatcher` instance, a preset filter), construct the rule directly and register it via `$config->throttles->addRule(new ThrottleRule(..., scope: $matcher))`.
+For a matcher-backed scope (an `IpMatcher` instance, a preset filter), construct a `Flowd\Phirewall\Config\Rule\ThrottleRule` directly and register it via `$config->throttles->addRule(new ThrottleRule(..., scope: $matcher))`.
 
 ::: tip
 For trusted traffic that should bypass **all** rules (not only throttles), use [safelists](/features/safelists-blocklists) instead. Safelisted requests skip the entire firewall pipeline, including blocklists, fail2ban, and track rules.

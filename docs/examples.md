@@ -1085,7 +1085,7 @@ $redis = new PredisClient(getenv('REDIS_URL') ?: 'redis://localhost:6379');
 $config = new Config(new RedisCache($redis));
 
 // Resolve the real client IP behind a proxy. Setting it on the Config makes
-// null-key rules proxy-aware, so the scoped login throttles below key on the
+// keyless rules proxy-aware, so the scoped login throttles below key on the
 // resolved client IP without touching the raw REMOTE_ADDR peer.
 $config->setIpResolver((new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']))->resolve(...));
 
