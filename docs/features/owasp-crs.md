@@ -581,6 +581,17 @@ $config->blocklists->addRule(new BlocklistRule('owasp', $matcher));
 Use `@pm` for simple keyword matching and `@rx` for complex patterns. `@pm` is significantly faster for lists of words.
 :::
 
+### PCRE JIT
+
+Every `@rx` operator - and every other regex in Phirewall, from path and header filters to the bot presets - runs through PCRE, and PHP enables PCRE's just-in-time compiler by default (`pcre.jit=1`). Keep it enabled: without JIT each pattern falls back to the interpreter, which is noticeable when a full paranoia level evaluates on every request.
+
+Two things can switch the JIT off silently:
+
+- The `pcre.jit` ini setting was disabled.
+- The PCRE library of the PHP build has no JIT support at all (`PCRE_JIT_SUPPORT` is `false`). This happens in some hardened environments that disallow the executable memory the JIT needs.
+
+Make sure both hold in the environment your application actually runs in. Each PHP SAPI loads its own ini files, so the web server's PHP can be configured differently than the CLI.
+
 ## Best Practices
 
 1. **Start with a minimal rule set.** Add rules incrementally and test each addition against your application's normal traffic to identify false positives.
