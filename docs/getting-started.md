@@ -856,6 +856,8 @@ $config->setFailOpen(true);
 $config->setFailOpen(false);
 ```
 
+The policy also governs pattern-blocklist regex matching: a compile-valid pattern that errors at match time (e.g. the backtrack limit exceeded) counts as no match under fail-open, while a fail-closed firewall treats the error as a match, so a forced engine error cannot slip past a block rule. The OWASP CRS engine is separate: its `@rx` operator always treats an engine error as a match, regardless of this policy (see [OWASP CRS](/features/owasp-crs#operator-evaluators)).
+
 ## Response Headers
 
 Diagnostic `X-Phirewall` headers are opt-in and can be added to blocked or safelisted responses:

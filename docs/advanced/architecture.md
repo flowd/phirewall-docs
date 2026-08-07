@@ -98,7 +98,7 @@ For each Fail2Ban rule:
 1. Checks if the key is already banned - if so, dispatches `Fail2BanBlocked` and returns a blocked result immediately
 2. If the filter matches, increments the failure counter and blocks the request (`403`). A match below the threshold sets `DecisionPath::Fail2BanMatched` and dispatches `Fail2BanMatched`; the Nth match additionally bans the key, sets `DecisionPath::Fail2BanBanned`, and dispatches `Fail2BanBanned` (never both events)
 
-The pre-handler path (during `decide()`) blocks on every match and bans at the threshold. The post-handler path (via `processRecordedSignal()`) shares the same `count >= threshold` ban comparison but never blocks the current request and never dispatches `Fail2BanMatched`. The ban fires on the Nth match, consistent with Allow2Ban.
+The pre-handler path (during `decide()`) blocks on every match and bans at the threshold. The post-handler path (via `processRecordedSignal()`) shares the same `count >= threshold` ban comparison but never dispatches `Fail2BanMatched` and by default never blocks the current request; with `Config::enableBlockOnSignalBan()` the middleware replaces the handler response with the blocked response when the signal imposed the ban. The ban fires on the Nth match, consistent with Allow2Ban.
 
 See [Request Context](/advanced/request-context) for post-handler failure signaling.
 

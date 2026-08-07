@@ -45,21 +45,15 @@ Only genuine failures are counted, so a user who logs in correctly on the first 
 Add a rate limit specifically on the login path to slow down attackers:
 
 ```php
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Psr\Http\Message\ServerRequestInterface;
 
-// A null key defaults to the resolved client IP (proxy-aware via the Config's
-// IP resolver); the scope filter restricts the throttle to the login path.
-$config->throttles->addRule(new ThrottleRule(
-    'login-throttle',
+// The scope filter restricts the throttle to the login path; the keyless
+// rule counts per resolved client IP (proxy-aware via the Config's IP resolver).
+$config->throttles->add('login-throttle',
     limit: 10,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(
-        fn(ServerRequestInterface $req): bool => $req->getUri()->getPath() === '/login'
-    ),
-));
+    scope: fn(ServerRequestInterface $req): bool => $req->getUri()->getPath() === '/login',
+);
 ```
 
 ### Credential Stuffing (Per-Username)
@@ -70,10 +64,9 @@ Throttle per username to prevent attackers from testing many passwords against a
 $config->throttles->add('account-throttle',
     limit: 5,
     period: 60,
+    scope: fn(ServerRequestInterface $req): bool =>
+        $req->getMethod() === 'POST' && $req->getUri()->getPath() === '/login',
     key: function (ServerRequestInterface $req): ?string {
-        if ($req->getMethod() !== 'POST' || $req->getUri()->getPath() !== '/login') {
-            return null;
-        }
         // Key on the submitted credential read from the request body, not a
         // client-settable header: an attacker could rotate or omit X-Username
         // to dodge the per-account limit entirely.
@@ -348,22 +341,16 @@ $config->throttles->add('api',
 Apply stricter limits to mutating operations:
 
 ```php
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Psr\Http\Message\ServerRequestInterface;
 
-// A null key defaults to the resolved client IP; the scope filter restricts the
-// throttle to mutating methods.
-$config->throttles->addRule(new ThrottleRule(
-    'write-ops',
+// The scope filter restricts the throttle to mutating methods; the keyless
+// rule counts per resolved client IP.
+$config->throttles->add('write-ops',
     limit: 50,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(
-        fn(ServerRequestInterface $req): bool =>
-            in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
-    ),
-));
+    scope: fn(ServerRequestInterface $req): bool =>
+        in_array($req->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true),
+);
 ```
 
 ### Allow2Ban for High-Volume Abuse
@@ -410,12 +397,10 @@ $proxy = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
 $config->throttles->add('export',
     limit: 10,
     period: 3600,
-    key: function (ServerRequestInterface $req) use ($proxy): ?string {
-        if (str_starts_with($req->getUri()->getPath(), '/api/export')) {
-            return $req->getAttribute('userId') ?? $proxy->resolve($req);
-        }
-        return null;
-    },
+    scope: fn(ServerRequestInterface $req): bool =>
+        str_starts_with($req->getUri()->getPath(), '/api/export'),
+    key: fn(ServerRequestInterface $req): ?string =>
+        $req->getAttribute('userId') ?? $proxy->resolve($req),
 );
 ```
 
@@ -439,9 +424,7 @@ Combine all layers into a single production configuration:
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
 use Flowd\Phirewall\Config\Rule\SafelistRule;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 use Flowd\Phirewall\Matchers\TrustedBotMatcher;
 use Flowd\Phirewall\Middleware;
@@ -500,15 +483,13 @@ $config->fail2ban->add('login-brute-force',
 
 // ── Layer 5: Throttling ───────────────────────────────────────────────
 $config->throttles->multi('api', [1 => 5, 60 => 200]);
-// Null key defaults to the resolved client IP (the resolver set above);
-// the scope filter restricts the throttle to the login path.
-$config->throttles->addRule(new ThrottleRule(
-    'login',
+// The scope restricts the throttle to the login path; the keyless rule
+// counts per resolved client IP (the resolver set above).
+$config->throttles->add('login',
     limit: 10,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(fn($req): bool => $req->getUri()->getPath() === '/login'),
-));
+    scope: fn($req): bool => $req->getUri()->getPath() === '/login',
+);
 
 // ── Layer 6: Allow2Ban ────────────────────────────────────────────────
 $config->allow2ban->add('volume-ban',

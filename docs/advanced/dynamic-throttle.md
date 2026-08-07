@@ -228,43 +228,35 @@ $config->throttles->add('api',
 
 ### Approach 2: Separate Rules per Tier
 
-Create separate rules and use the key closure returning `null` to skip:
+Create separate rules, each scoped to its tier:
 
 ```php
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 
-// Make null-key rules proxy-aware (used by the anonymous fallback below).
+// Make keyless rules proxy-aware (used by the anonymous fallback below).
 $config->setIpResolver((new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']))->resolve(...));
 
-// Free tier: 100 requests/minute
+// Free tier: 100 requests/minute per user
 $config->throttles->add('free-tier',
     limit: 100, period: 60,
-    key: function ($request): ?string {
-        if ($request->getAttribute('plan') !== 'free') return null;
-        return $request->getAttribute('userId');
-    },
+    scope: fn($request): bool => $request->getAttribute('plan') === 'free',
+    key: fn($request): ?string => $request->getAttribute('userId'),
 );
 
-// Pro tier: 1000 requests/minute
+// Pro tier: 1000 requests/minute per user
 $config->throttles->add('pro-tier',
     limit: 1000, period: 60,
-    key: function ($request): ?string {
-        if ($request->getAttribute('plan') !== 'pro') return null;
-        return $request->getAttribute('userId');
-    },
+    scope: fn($request): bool => $request->getAttribute('plan') === 'pro',
+    key: fn($request): ?string => $request->getAttribute('userId'),
 );
 
-// Anonymous fallback: 50 requests/minute per client IP (requests without a userId).
-// Null key defaults to the resolved client IP; the scope selects anonymous requests.
-$config->throttles->addRule(new ThrottleRule(
-    'anonymous',
+// Anonymous fallback: 50 requests/minute per client IP (requests without a
+// userId). The keyless rule counts per resolved client IP.
+$config->throttles->add('anonymous',
     limit: 50,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(fn($request): bool => $request->getAttribute('userId') === null),
-));
+    scope: fn($request): bool => $request->getAttribute('userId') === null,
+);
 ```
 
 ::: tip Read tier and identity from request attributes, not headers
@@ -276,64 +268,48 @@ $config->throttles->addRule(new ThrottleRule(
 Assign different limits to endpoints based on their resource cost:
 
 ```php
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 
 // Resolve the real client IP behind a proxy. Setting it on the Config makes the
-// null-key rules below proxy-aware; the userId-keyed export rule reuses the same
+// keyless rules below proxy-aware; the userId-keyed export rule reuses the same
 // resolver for its IP fallback.
 $proxyResolver = new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']);
 $config->setIpResolver($proxyResolver->resolve(...));
 
 // Cheap read operations: 1000 req/min (GET requests, keyed on the client IP)
-$config->throttles->addRule(new ThrottleRule(
-    'read-operations',
+$config->throttles->add('read-operations',
     limit: 1000,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(fn($request): bool => $request->getMethod() === 'GET'),
-));
+    scope: fn($request): bool => $request->getMethod() === 'GET',
+);
 
 // Moderate write operations: 100 req/min
-$config->throttles->addRule(new ThrottleRule(
-    'write-operations',
+$config->throttles->add('write-operations',
     limit: 100,
     period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(
-        fn($request): bool => in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)
-    ),
-));
+    scope: fn($request): bool => in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true),
+);
 
 // Expensive export endpoints: 10 req/hour, keyed per user with a client-IP fallback
 $config->throttles->add('export-endpoints',
     limit: 10, period: 3600,
-    key: function ($request) use ($proxyResolver): ?string {
-        if (!str_starts_with($request->getUri()->getPath(), '/api/export')) return null;
-        return $request->getAttribute('userId') ?? $proxyResolver->resolve($request);
-    },
+    scope: fn($request): bool => str_starts_with($request->getUri()->getPath(), '/api/export'),
+    key: fn($request): ?string => $request->getAttribute('userId') ?? $proxyResolver->resolve($request),
 );
 ```
 
 ## Conditional Bypass
 
-Skip rate limiting for certain scenarios with a scope filter; the rule is skipped for any request the filter does not match. The key stays `null`, so matched requests are counted against the resolved client IP:
+Skip rate limiting for certain scenarios with a scope filter; the rule is skipped for any request the filter does not match. The key stays omitted, so matched requests are counted against the resolved client IP:
 
 ```php
-use Flowd\Phirewall\Config\ClosureRequestMatcher;
-use Flowd\Phirewall\Config\Rule\ThrottleRule;
 use Flowd\Phirewall\Http\TrustedProxyResolver;
 
-// Make the null-key rule proxy-aware.
+// Make the keyless rule proxy-aware.
 $config->setIpResolver((new TrustedProxyResolver(['10.0.0.0/8', '172.16.0.0/12']))->resolve(...));
 
-$config->throttles->addRule(new ThrottleRule(
-    'api-limit',
-    limit: 100,
-    period: 60,
-    keyExtractor: null,
-    scope: new ClosureRequestMatcher(function ($request): bool {
+$config->throttles->add('api-limit', limit: 100, period: 60,
+    scope: function ($request): bool {
         // Skip requests reaching us directly from the internal network
         // (checked against the raw peer, not the resolved client).
         $peer = $request->getServerParams()['REMOTE_ADDR'] ?? '';
@@ -344,9 +320,11 @@ $config->throttles->addRule(new ThrottleRule(
         if (str_starts_with($request->getUri()->getPath(), '/webhooks/')) return false;
 
         return true;
-    }),
-));
+    },
+);
 ```
+
+For a matcher-backed scope (an `IpMatcher` instance, a preset filter), construct a `Flowd\Phirewall\Config\Rule\ThrottleRule` directly and register it via `$config->throttles->addRule(new ThrottleRule(..., scope: $matcher))`.
 
 ::: tip
 For trusted traffic that should bypass **all** rules (not only throttles), use [safelists](/features/safelists-blocklists) instead. Safelisted requests skip the entire firewall pipeline, including blocklists, fail2ban, and track rules.
@@ -408,7 +386,7 @@ $firewall->resetAll();
 
 1. **Use descriptive rule names.** Names appear in `ThrottleExceeded` events and, when `enableResponseHeaders()` is active, in the `X-Phirewall-Matched` response header. (The `X-RateLimit-*` headers carry only numeric limit/remaining/reset values, not the rule name.) Use `api-free-tier` instead of `rule1`.
 
-2. **Return `null` to skip.** This is the primary mechanism for conditional rate limiting. When a key closure returns `null`, the rule is skipped with zero overhead.
+2. **Scope conditional throttles.** Pass `scope:` to restrict which requests count and leave the key omitted, so matching requests count per resolved client IP. A key closure that returns `null` also skips the rule; use that form only when the rule keys on something other than the client IP (a header, a username, and so on).
 
 3. **Pre-load external data.** Never query databases or external services inside key or limit closures. Load data at configuration time.
 
