@@ -38,16 +38,16 @@ use Flowd\Phirewall\Store\InMemoryCache;
 
 $config = new Config(new InMemoryCache());
 
-// Block requests matching any active CRS rule at paranoia level 1.
+// Block requests whose accumulated CRS anomaly score reaches the threshold (default 5).
 $config = $config->with(Presets::blocklist(ParanoiaLevel::Level1));
 ```
 
-Want to also ban repeat offenders? Use the Fail2Ban preset instead. A CRS
-match is malicious by definition, so from 0.8 both presets block every match
-with `403`; the difference is that the Fail2Ban preset additionally **bans**
-the key after the threshold. A banned attacker is then blocked by a cheap ban
-lookup (the CRS engine no longer runs for them), and the ban is observable via
-`Fail2BanBanned` and mirrorable to your web server:
+Want to also ban repeat offenders? Use the Fail2Ban preset instead. It blocks
+the same scoring requests with `403` and additionally **bans** the client key
+once it produced `threshold` such requests within `period` seconds. A banned
+attacker is then blocked by a cheap ban lookup (the CRS engine no longer runs
+for them), and the ban is observable via `Fail2BanBanned` and mirrorable to
+your web server:
 
 ```php
 use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
@@ -61,6 +61,106 @@ $config = $config->with(
 See the [package README](https://github.com/flowd/phirewall-preset-owasp-crs) for the
 preset API, paranoia-level guidance, and how the bundled rules are imported and kept
 up to date.
+
+## Anomaly Scoring
+
+Since preset package 0.5, evaluation follows the CRS anomaly-scoring model instead of
+blocking on the first match: every matching rule contributes its `severity` score
+(CRITICAL 5, ERROR 4, WARNING 3, NOTICE 2; rules without a recognizable severity score
+as CRITICAL), and the request is blocked once the accumulated score **reaches** the
+threshold (`score >= threshold`, default 5, the CRS standard inbound threshold).
+
+In practice most bundled rules are CRITICAL and still block on their own; the
+WARNING-level rules (for example the `942430` restricted-character checks, a classic
+source of false positives on marketing parameters) no longer block alone - two of them
+together do. `anomalyThreshold: 1` restores block-on-first-match behaviour:
+
+```php
+$config = $config->with(Presets::blocklist(ParanoiaLevel::Level1, anomalyThreshold: 1));
+```
+
+Two decisions bypass the threshold and block immediately (fail closed): a variable
+truncated at the collection cap, and a value that triggers a PCRE engine error.
+Scores never accumulate across requests; the Fail2Ban preset counts a request toward
+the ban whenever CRS blocks it - when its score reaches the threshold or the request
+fails closed.
+
+A blocked request's `MatchResult` metadata always carries `owasp_anomaly_score`,
+`owasp_anomaly_threshold`, `owasp_rule_ids` (comma-separated) and `owasp_rule_id`
+(first match); it also carries `msg` and `owasp_log_data` when the first matching rule
+provides them, and `owasp_fail_closed` on a fail-closed block.
+
+## Tuning False Positives
+
+### Target Exclusions
+
+Marketing and tracking parameters (`utm_*`, `fbclid`, ...) regularly carry values that
+look like attack payloads to CRS rules. Instead of disabling whole rules, exclude the
+parameter from inspection - globally, per rule id (CRS `SecRuleUpdateTargetById`
+style) or per rule tag. Both presets accept a `configure` closure that receives the
+matcher before the first request:
+
+```php
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+
+$config = $config->with(Presets::blocklist(
+    ParanoiaLevel::Level1,
+    configure: static function (CoreRuleSetMatcher $matcher): void {
+        $matcher->excludeTarget('ARGS:/^utm_/');            // all rules ignore utm_* values
+        $matcher->excludeTarget('ARGS_NAMES:/^utm_/');      // ... and the utm_* parameter names
+        $matcher->excludeTargetById(942431, 'ARGS:fbclid'); // one rule ignores one parameter
+        $matcher->excludeTargetByTag('attack-sqli', 'ARGS:comment');
+    },
+));
+```
+
+Selector forms: bare variable (`ARGS`), exact name (`ARGS:utm_source`) or name pattern
+(`ARGS:/^utm_/`). Header names match case-insensitively, argument and cookie names
+case-sensitively. Exclusions are runtime tuning: they never enter the compiled-data
+cache and cannot lift the collection cap. They also do not rewrite the raw
+`QUERY_STRING`/`REQUEST_URI` values - the few rules inspecting those still see the
+full string; use `disable($ruleId)`, a manipulator, or a bare-variable exclusion
+naming the variable that rule actually inspects
+(`excludeTargetById(920260, 'REQUEST_URI')`, but `excludeTargetById(931110,
+'QUERY_STRING')` since 931110 inspects the query string). A selector naming a
+variable the rule does not target is accepted but silently does nothing.
+
+### Manipulators (advanced)
+
+A manipulator transforms collected values before rules match against them - the escape
+hatch when excluding a whole parameter is too broad. Returning an empty string removes
+the value from inspection:
+
+```php
+$matcher->addManipulator(
+    static fn (string $variable, ?string $name, string $value): string
+        => $name === 'fbclid' ? '' : $value,
+);
+```
+
+::: warning Manipulators weaken detection
+Whatever a manipulator removes or rewrites is invisible to every rule it applies to -
+including real attack payloads hidden inside the removed content. Prefer target
+exclusions; keep manipulators as narrow as possible. Exceptions thrown by a
+manipulator propagate.
+:::
+
+### Match Logging
+
+Pass a PSR-3 logger to either preset (or to `CoreRuleSetMatcher`) to log every rule
+match at `info` level - **including sub-threshold matches on requests that pass**.
+Those entries are the tuning signal: watch them to find false-positive patterns before
+scores ever accumulate to a block, then add a target exclusion. Blocked requests
+additionally log a `warning` with total score, threshold and all matched rule ids.
+
+```php
+$config = $config->with(Presets::blocklist(ParanoiaLevel::Level1, logger: $logger));
+```
+
+The log context carries `rule_id`, `severity`, `anomaly_score`, `paranoia_level`,
+`matched_variable` (e.g. `ARGS:utm_content`), `msg`, `method`, `path` and `log_data` -
+the rule's CRS `logdata:` template expanded with the matched data (`%{TX.0}`,
+`%{MATCHED_VAR_NAME}`, `%{MATCHED_VAR}`), sanitized and length-bounded.
 
 ## Writing Your Own Rules
 
@@ -178,6 +278,12 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `REQUEST_COOKIES` | All cookie values |
 | `REQUEST_COOKIES_NAMES` | Names of all cookies |
 
+Collection variables also accept **named selectors**: `REQUEST_HEADERS:User-Agent`
+inspects only that header, and negated selectors such as `!REQUEST_HEADERS:Cookie` or
+`!ARGS_NAMES:/^utm_/` exclude members from the rule's bare selector of the same
+variable. Selectors of unsupported variables (`XML:/*`, `REQUEST_BODY`) collect
+nothing; the rule evaluates against its supported targets only.
+
 ### Operators
 
 | Operator | Syntax | Description |
@@ -185,11 +291,18 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 | `@rx` | `@rx pattern` | PCRE regular expression match |
 | `@contains` | `@contains text` | Case-insensitive substring match |
 | `@streq` | `@streq text` | Case-insensitive exact string match |
-| `@startswith` | `@startswith text` | Case-insensitive prefix match |
-| `@beginswith` | `@beginswith text` | Alias for `@startswith` |
+| `@beginswith` | `@beginswith text` | Case-insensitive prefix match |
+| `@startswith` | `@startswith text` | Alias for `@beginswith` (phirewall extension; not a ModSecurity operator) |
 | `@endswith` | `@endswith text` | Case-insensitive suffix match |
 | `@pm` | `@pm word1 word2` | Phrase match (case-insensitive substring match against any of the listed phrases) |
 | `@pmFromFile` | `@pmFromFile file.txt` | Phrase match from a file (one phrase per line) |
+
+The string operators (`@streq`, `@contains`, `@beginsWith`, `@endsWith`) match
+case-insensitively. In ModSecurity these operators are case-sensitive and case
+folding comes from a `t:lowercase` transformation on the target; because this engine
+ignores transformations, folding case in the operators reproduces that common CRS
+pattern. A rule that genuinely wanted case-sensitive matching without `t:lowercase`
+is matched case-insensitively instead (a safe over-match, never an under-match).
 
 ### Actions
 
@@ -197,9 +310,12 @@ Phirewall supports a subset of the ModSecurity SecRule language:
 |--------|-------------|
 | `id:N` | Rule ID (required, must be unique) |
 | `phase:N` | Processing phase (currently informational) |
-| `deny` | Block the request (required for the rule to trigger blocking) |
-| `block` | Alias for `deny` - both trigger blocking |
-| `msg:'text'` | Human-readable description for logging |
+| `deny` | Make the rule score/block (required for the rule to participate) |
+| `block` | Alias for `deny` |
+| `msg:'text'` | Human-readable description for logging and metadata |
+| `severity:'LEVEL'` | Anomaly score contribution: CRITICAL 5, ERROR 4, WARNING 3, NOTICE 2 (missing/unknown scores as CRITICAL) |
+| `logdata:'template'` | Log template expanded on a match (`%{TX.0}`, `%{MATCHED_VAR_NAME}`, `%{MATCHED_VAR}`) |
+| `tag:'name'` | Rule tags (repeatable); `paranoia-level/N` sets the level, tags drive `excludeTargetByTag()` |
 
 ### Line Continuation
 
@@ -223,16 +339,18 @@ SecRule ARGS "@rx (?i)\bunion\b.*\bselect\b" "id:942100,phase:2,deny,msg:'SQLi'"
 
 ### Tuning the Bundled Snapshot
 
-The presets from the [Quick Start](#quick-start) are fixed rule bundles. To tune the bundled
-CRS snapshot (for example, to drop a false-positive-prone rule), load it as a mutable
-`CoreRuleSet` via `Presets::coreRuleSet()` and wire it yourself:
+The presets from the [Quick Start](#quick-start) accept a `configure` closure for
+[exclusions and manipulators](#tuning-false-positives). For full manual control, load
+the bundled snapshot as a mutable `CoreRuleSet` via `Presets::coreRuleSet()` and wire
+it yourself:
 
 ```php
 use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
 use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
 use Flowd\PhirewallPresetOwaspCrs\Presets;
 
-$rules = Presets::coreRuleSet(ParanoiaLevel::Level2);
+$rules = Presets::coreRuleSet(ParanoiaLevel::Level2)
+    ->excludeTarget('ARGS:/^utm_/');
 $rules->disable(942100); // SQLi via libinjection, if it false-positives for your app
 
 $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
@@ -289,13 +407,17 @@ $config->enableResponseHeaders();
 $config->enableDiagnosticsHeaders();
 ```
 
-When an OWASP rule blocks a request, the response includes:
+When the accumulated anomaly score blocks a request, the response includes:
 
 ```
 X-Phirewall: blocklist
 X-Phirewall-Matched: owasp
-X-Phirewall-Owasp-Rule: 942100
+X-Phirewall-Owasp-Rule: 942430,942431
+X-Phirewall-Owasp-Score: 6/5
 ```
+
+`X-Phirewall-Owasp-Rule` lists every matched rule id (capped at 10, then `,+N`);
+`X-Phirewall-Owasp-Score` is `score/threshold`.
 
 ::: info
 `X-Phirewall` and `X-Phirewall-Matched` require `enableResponseHeaders()`. The `X-Phirewall-Owasp-Rule` header is controlled independently by `enableDiagnosticsHeaders()` (`enableOwaspDiagnosticsHeader()` is a deprecated alias): the CRS matcher declares it via the generic `diagnostic_headers` metadata key on its `MatchResult`, so it also appears when the matcher is used as a Fail2Ban filter.
@@ -452,7 +574,7 @@ SecRule ARGS "@rx (?i)union.*select" "id:942100,phase:2,deny,msg:'SQLi'"
        Variable --------> VariableCollectorFactory --> ArgsCollector
 ```
 
-When a rule is constructed, the factories resolve the variable names and operator into concrete strategy instances. On each request, `CoreRule::matches()` collects values via the variable collectors and passes them to the operator evaluator.
+When a rule is constructed, the factories resolve the variable names and operator into concrete strategy instances. On each request, `CoreRuleSet::evaluate()` collects values via the variable collectors (applying exclusions and manipulators), passes them to the operator evaluators and accumulates the matching rules' severity scores into a `RuleSetEvaluation`.
 
 ### Variable Collectors
 
@@ -480,7 +602,7 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 | `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode; values longer than 8 KiB are truncated to 8,192 bytes and the head is still matched (a PCRE engine error fails closed to a match) |
 | `@contains` | `ContainsEvaluator` | Case-insensitive substring search |
 | `@streq` | `StringEqualEvaluator` | Case-insensitive exact match |
-| `@startswith` / `@beginswith` | `StartsWithEvaluator` | Case-insensitive prefix match |
+| `@beginswith` / `@startswith` | `StartsWithEvaluator` | Case-insensitive prefix match |
 | `@endswith` | `EndsWithEvaluator` | Case-insensitive suffix match |
 | `@pm` | `PhraseMatchEvaluator` | Multi-phrase case-insensitive match |
 | `@pmFromFile` | `PhraseMatchFromFileEvaluator` | Phrase match from file with path traversal protection |
@@ -535,14 +657,17 @@ use Psr\Http\Message\ServerRequestInterface;
 
 final readonly class RequestBodyCollector implements VariableCollectorInterface
 {
-    /** @return list<string> */
+    /** @return list<array{name: ?string, value: string}> */
     public function collect(ServerRequestInterface $serverRequest): array
     {
         $body = (string) $serverRequest->getBody();
-        return $body !== '' ? [$body] : [];
+        return $body !== '' ? [['name' => null, 'value' => $body]] : [];
     }
 }
 ```
+
+Each entry carries the member name it belongs to (parameter, cookie or header name)
+so selectors and exclusions can address it; unnamed variables use `name: null`.
 
 ## Performance
 
