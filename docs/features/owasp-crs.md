@@ -261,6 +261,42 @@ $skipped = $report['skipped']; // int - Lines that were skipped
 
 Every factory accepts an optional `$maxValuesPerCrsVariable`: a positive-int cap on how many values are collected per CRS variable per request. It bounds the evaluation cost of count-unbounded, attacker-controlled variables such as `ARGS` (a CPU-DoS guard). The default (`null`) derives the cap from twice PHP's `max_input_vars`, falling back to 2000 when the directive is unset or non-positive, so a request PHP can fully parse is never falsely truncated. When a variable *is* truncated at the cap, rules targeting it fail closed and treat the request as a match, so padding a payload past the cap cannot evade a rule. A value `< 1` throws `InvalidArgumentException`.
 
+### Per-Value Length Cap
+
+The count cap above bounds *how many* values are collected. A second cap bounds
+*how long a single value* may be: a collected value longer than
+`CoreRule::MAX_INSPECTABLE_VALUE_LENGTH` (default **2048 bytes**) is treated as
+un-inspectable, and the rule **fails closed** (blocks) - the same contract as the
+count cap. One mechanism covers three concerns at once:
+
+- **Evasion.** A payload placed past the limit (`?q=` + 9 KB of filler + `UNION SELECT …`) can no longer slip through - the oversized value blocks instead of being partially inspected.
+- **ReDoS.** No value longer than the cap ever reaches the regex engine, so worst-case `@rx` backtracking is bounded by the cap, not by the request size.
+- **Unbounded scan.** The phrase/substring operators (`@contains`, `@pm`, `@pmFromFile`, …) never scan an arbitrarily large value.
+
+Tune it per rule set with `CoreRuleSet::setMaxInspectableValueLength(int $bytes)`
+or `CoreRuleSetMatcher::setMaxInspectableValueLength(int $bytes)` (the latter is
+reachable through the presets' `configure:` closure and queued until the rules
+load). Both validate `$bytes >= 1` and return `$this` for chaining:
+
+```php
+use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
+
+$config = $config->with(Presets::blocklist(
+    ParanoiaLevel::Level1,
+    configure: static fn (CoreRuleSetMatcher $matcher) => $matcher->setMaxInspectableValueLength(8192),
+));
+```
+
+Choosing the value is a trade-off:
+
+- **Lower** (e.g. 1024) - **pro:** tighter worst-case regex time and a smaller per-value CPU budget. **con:** more false-positive blocks, because a value over the cap is blocked even when it is harmless.
+- **Higher** (e.g. 8192) - **pro:** fewer false positives on legitimately large single values, notably long tokens in a `Cookie` or `Authorization` header and base64 fields. **con:** a larger subject reaches the regex engine, so the worst-case backtracking cost the cap bounds grows with it (roughly cubic for the pathological CRS XSS patterns).
+
+The default of 2048 balances the two: it bounds a pathological `@rx` subject to
+roughly a second of worst-case work while passing typical request values. Raise
+it if your application legitimately sends large single fields or tokens; lower it
+for a stricter CPU bound when your traffic has no large single fields.
+
 ## Supported SecRule Syntax
 
 Phirewall supports a subset of the ModSecurity SecRule language:
@@ -601,7 +637,7 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 
 | Operator | Evaluator Class | Behavior |
 |----------|----------------|----------|
-| `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode; values longer than 8 KiB are truncated to 8,192 bytes and the head is still matched (a PCRE engine error fails closed to a match) |
+| `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode; a subject-induced PCRE engine error fails closed. Oversized values are bounded upstream by the [per-value length cap](#per-value-length-cap), so the evaluator no longer truncates. |
 | `@contains` | `ContainsEvaluator` | Case-insensitive substring search |
 | `@streq` | `StringEqualEvaluator` | Case-insensitive exact match |
 | `@beginswith` / `@startswith` | `StartsWithEvaluator` | Case-insensitive prefix match |
@@ -611,10 +647,10 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 
 Unsupported operators resolve to `UnsupportedOperatorEvaluator`, which never matches (safe no-op).
 
-::: warning ReDoS protection: 8 KiB length guard on `@rx`
-`RegexEvaluator` does **not** skip overlength values. A value longer than 8,192 bytes is truncated to that length (dropping a partial trailing UTF-8 sequence) and the **head is still matched** against the pattern. This bounds the PCRE work on unbounded attacker-controlled input - which risks catastrophic backtracking that can freeze the PHP process (ReDoS) - while preventing evasion by padding a payload past the limit. A value that triggers a PCRE engine error (catastrophic backtracking, invalid UTF-8 under `/u`, backtrack/recursion limit) is treated as a **match** (fail-closed), so a malformed payload can never silently disable a rule.
+::: warning ReDoS protection: per-value length cap + fail-closed
+Catastrophic `@rx` backtracking (which can freeze the PHP process) is bounded by the [per-value length cap](#per-value-length-cap): a value longer than `CoreRule::MAX_INSPECTABLE_VALUE_LENGTH` (default 2048 bytes) never reaches the regex engine - the rule fails closed instead of matching a head window. A subject that still triggers a PCRE engine error *within* the limit (invalid UTF-8 under `/u`, backtrack/recursion limit) also fails closed, so a malformed payload can never silently disable a rule.
 
-In practice, legitimate request values (query parameters, header values, cookie values) are rarely larger than a few kilobytes, so the truncation only affects oversized, likely-hostile input.
+Earlier versions truncated an oversized value to an 8 KiB head and matched only that head. That left the 8 KiB head as the peak backtracking-cost point *and* let a payload evade by sitting past the head. The current fail-closed cap replaces that behavior, and its length is configurable - see [Per-Value Length Cap](#per-value-length-cap) for the trade-off between a tighter CPU bound and false-positive blocks on large legitimate values.
 :::
 
 ### Adding Custom Operators
