@@ -157,10 +157,12 @@ additionally log a `warning` with total score, threshold and all matched rule id
 $config = $config->with(Presets::blocklist(ParanoiaLevel::Level1, logger: $logger));
 ```
 
-The log context carries `rule_id`, `severity`, `anomaly_score`, `paranoia_level`,
-`matched_variable` (e.g. `ARGS:utm_content`), `msg`, `method`, `path` and `log_data` -
-the rule's CRS `logdata:` template expanded with the matched data (`%{TX.0}`,
-`%{MATCHED_VAR_NAME}`, `%{MATCHED_VAR}`), sanitized and length-bounded.
+The per-match log context carries `rule_id`, `severity`, `anomaly_score`,
+`paranoia_level`, `matched_variable` (e.g. `ARGS:utm_content`), `msg`, `fail_closed`,
+`method`, `path` and `log_data` - the rule's CRS `logdata:` template expanded with the
+matched data (`%{TX.0}`, `%{MATCHED_VAR_NAME}`, `%{MATCHED_VAR}`); the warning context
+carries `total_score`, `anomaly_threshold`, `rule_ids`, `fail_closed`, `method` and
+`path`. Attacker-controlled context values are sanitized and length-bounded.
 
 ## Writing Your Own Rules
 
@@ -351,7 +353,7 @@ use Flowd\PhirewallPresetOwaspCrs\Presets;
 
 $rules = Presets::coreRuleSet(ParanoiaLevel::Level2)
     ->excludeTarget('ARGS:/^utm_/');
-$rules->disable(942100); // SQLi via libinjection, if it false-positives for your app
+$rules->disable(942430); // restricted SQL character anomaly, if it false-positives for your app
 
 $config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
 ```
@@ -686,7 +688,7 @@ use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
 $config->setCompiledDataCache(new CompiledDataCache('/path/to/var/cache/phirewall'));
 
 $matcher = CoreRuleSetMatcher::fromRuleFiles(ParanoiaLevel::Level1);
-$matcher->disable(942100); // toggles before the first request are queued
+$matcher->disable(941110); // toggles before the first request are queued
 $config->blocklists->addRule(new BlocklistRule('owasp', $matcher));
 ```
 
