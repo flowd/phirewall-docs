@@ -330,7 +330,7 @@ Enable diagnostic headers:
 $config->enableDiagnosticsHeaders();
 ```
 
-The CRS matcher attaches an `X-Phirewall-Owasp-Rule` header with the matched rule ID to blocked responses. This works wherever the matcher decides the block: as a blocklist rule and as a Fail2Ban filter. Any matcher can ship such headers via the `diagnostic_headers` metadata key on its `MatchResult`.
+The CRS matcher attaches an `X-Phirewall-Owasp-Rule` header listing every matched rule ID (capped at 10, then `,+N`) and an `X-Phirewall-Owasp-Score` header (`score/threshold`) to blocked responses. This works wherever the matcher decides the block: as a blocklist rule and as a Fail2Ban filter. Any matcher can ship such headers via the `diagnostic_headers` metadata key on its `MatchResult`.
 
 ::: warning
 Only enable this in development or staging. In production, it reveals information about your security rules to potential attackers.
@@ -388,7 +388,8 @@ Enable `$config->enableResponseHeaders()` and check the response headers on bloc
 |--------|-------|
 | `X-Phirewall` | Block type: `blocklist`, `throttle`, `fail2ban`, or `allow2ban` |
 | `X-Phirewall-Matched` | Name of the rule that triggered the block |
-| `X-Phirewall-Owasp-Rule` | OWASP rule ID (only if `enableDiagnosticsHeaders()` is active) |
+| `X-Phirewall-Owasp-Rule` | Matched OWASP rule IDs, comma-separated (capped at 10, then `,+N`; only if `enableDiagnosticsHeaders()` is active) |
+| `X-Phirewall-Owasp-Score` | Accumulated CRS anomaly score as `score/threshold` (only if `enableDiagnosticsHeaders()` is active) |
 
 ::: info
 These headers are disabled by default. Call `$config->enableResponseHeaders()` to enable them for debugging.
