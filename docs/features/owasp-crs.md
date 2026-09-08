@@ -167,11 +167,13 @@ $matcher->excludeTargetByTag(
 );
 ```
 
-The condition receives `(string $value, ?string $name, string $variable)` and returns
-`true` to exclude; implement `TargetExclusionConditionInterface` for a reusable
-validator. It runs only for entries the selector matches, and its exceptions
-propagate like manipulator exceptions, governed by the failure policy
-(`useFailOpen()`).
+The condition receives `(string $value, ?string $name, string $variable,
+ServerRequestInterface $request)` and returns `true` to exclude - a closure
+declaring fewer parameters ignores the rest; the request enables context-dependent
+validation (per-host issuers, path-scoped rules, comparing against another header).
+Implement `TargetExclusionConditionInterface` for a reusable validator. It runs
+only for entries the selector matches, and its exceptions propagate like
+manipulator exceptions, governed by the failure policy (`useFailOpen()`).
 
 ::: warning Validate strictly
 Everything the condition approves is invisible to the rules in scope. Verify the
