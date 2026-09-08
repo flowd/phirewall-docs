@@ -144,7 +144,7 @@ naming the variable that rule actually inspects
 variable the rule does not target is accepted but silently does nothing.
 
 ::: tip Use the CRS 4 tags
-A tag no loaded rule carries makes a tag-scoped exclusion a silent no-op - the
+A tag that no loaded rule carries makes a tag-scoped exclusion a silent no-op - the
 classic case is a CRS 3 tag (`OWASP_CRS/WEB_ATTACK/SQL_INJECTION`) against the
 bundled CRS 4 snapshot, whose tags are `attack-sqli` and friends. With a PSR-3
 logger on the matcher, such a tag logs a `warning` once the rules are loaded;
