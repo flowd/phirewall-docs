@@ -79,16 +79,34 @@ together do. `anomalyThreshold: 1` restores block-on-first-match behaviour:
 $config = $config->with(Presets::blocklist(ParanoiaLevel::Level1, anomalyThreshold: 1));
 ```
 
-Two decisions bypass the threshold and block immediately (fail closed): a variable
-truncated at the collection cap, and a value that triggers a PCRE engine error.
+Three decisions bypass the threshold and block immediately (fail closed): a variable
+truncated at the collection cap, a single value longer than the per-value inspection
+limit (default 2048 bytes, see [Per-Value Length Cap](#per-value-length-cap)), and a
+value that triggers a PCRE engine error.
 Scores never accumulate across requests; the Fail2Ban preset counts a request toward
 the ban whenever CRS blocks it - when its score reaches the threshold or the request
 fails closed.
 
-A blocked request's `MatchResult` metadata always carries `owasp_anomaly_score`,
-`owasp_anomaly_threshold`, `owasp_rule_ids` (comma-separated) and `owasp_rule_id`
-(first match); it also carries `msg` and `owasp_log_data` when the first matching rule
-provides them, and `owasp_fail_closed` on a fail-closed block.
+A request blocked on its anomaly score - or by a rule-level fail-closed outcome (a
+capped variable, an oversized value, or a PCRE subject error) - carries
+`owasp_anomaly_score`, `owasp_anomaly_threshold`, `owasp_rule_ids` (comma-separated)
+and `owasp_rule_id` (first match); it also carries `msg`, `owasp_matched_variable`
+(the target the first matching rule fired on, e.g. `REQUEST_HEADERS:User-Agent` -
+the member name keeps the casing the client sent), `owasp_matched_value` (the
+value the rule fired on - readable so the match can be understood; sanitized,
+length-bounded and `[redacted]` for credential targets such as cookie values and
+`Authorization`-type headers) and `owasp_log_data` when the first matching rule
+provides them, and `owasp_fail_closed` on a fail-closed block
+(there `owasp_matched_variable` names the variable that failed closed). A
+block from an engine-internal fault under a fail-closed policy (`useFailOpen(false)`)
+instead carries only `owasp_anomaly_threshold` and `owasp_fail_closed`.
+
+**Fail-open policy.** An unexpected engine-internal fault during evaluation - for example a
+value manipulator that throws - is governed by the firewall's fail-open setting. Under the
+default fail-open policy the fault propagates to the core's error handling and the request is
+allowed (a `FirewallError` event is dispatched); when the firewall is configured fail-closed
+(fail-open disabled), the matcher blocks the request instead. This is separate from the
+rule-level fail-closed decisions above, which always block regardless of the policy.
 
 ## Tuning False Positives
 
@@ -125,6 +143,80 @@ naming the variable that rule actually inspects
 'QUERY_STRING')` since 931110 inspects the query string). A selector naming a
 variable the rule does not target is accepted but silently does nothing.
 
+### Conditional Exclusions: Validate the Value First
+
+Every exclude method accepts a `when:` condition - the selected entry is only
+excluded while the condition approves its value. That turns a blanket exclusion into
+a validated one: a parameter is skipped when it provably carries a legitimate value
+and stays fully inspected otherwise. The classic case is a signed token that trips
+character-class rules:
+
+```php
+$matcher->excludeTargetByTag(
+    'attack-sqli',
+    'ARGS:token',
+    when: static fn (string $value): bool => $jwtValidator->isValid($value),
+);
+```
+
+The condition receives `(string $value, ?string $name, string $variable)` and returns
+`true` to exclude; implement `TargetExclusionConditionInterface` for a reusable
+validator. It runs only for entries the selector matches, and its exceptions
+propagate like manipulator exceptions, governed by the failure policy
+(`useFailOpen()`).
+
+::: warning Validate strictly
+Everything the condition approves is invisible to the rules in scope. Verify the
+signature and parse the full format - a shape-only check ("looks like a JWT")
+invites attackers to wrap payloads in that shape.
+:::
+
+### CRS Rule-Exclusion Syntax
+
+`applyRuleExclusions()` and `applyRuleExclusionsFromFile()` - on `CoreRuleSet` and
+`CoreRuleSetMatcher` (queued until the rules load, validated eagerly) - accept the
+CRS rule-exclusion syntax, so existing ModSecurity tuning files can be reused:
+
+```php
+$config = $config->with(Presets::blocklist(
+    ParanoiaLevel::Level1,
+    configure: static function (CoreRuleSetMatcher $matcher): void {
+        $matcher->applyRuleExclusions(<<<'CONF'
+            # Configure-time directives: apply once, to the rules already loaded
+            SecRuleRemoveById 942440 "942430-942432"
+            SecRuleUpdateTargetById 942100 "!ARGS:search"
+            SecRuleUpdateTargetByTag attack-sqli "!ARGS:/^utm_/"
+
+            # Runtime exclusion rule: evaluated before the scoring rules on every
+            # request; its ctl: exclusions apply only to requests it matches.
+            SecRule REQUEST_URI "@beginsWith /api/webhooks/" \
+                "id:10001,phase:1,pass,nolog,\
+                ctl:ruleRemoveTargetByTag=attack-sqli;ARGS:payload"
+            CONF);
+    },
+));
+```
+
+Supported forms: `SecRuleRemoveById` (ids and `from-to` ranges), `SecRuleRemoveByTag`
+(exact tag, not a regex), `SecRuleUpdateTargetById` / `SecRuleUpdateTargetByTag`
+(negated `!TARGET` removals only), and runtime `SecRule` exclusions with
+`ctl:ruleRemoveById`, `ctl:ruleRemoveByTag`, `ctl:ruleRemoveTargetById` or
+`ctl:ruleRemoveTargetByTag`.
+
+Anything the engine cannot evaluate faithfully fails eagerly with an
+`InvalidArgumentException` instead of arming a weaker or dead exclusion: chained
+rules, unsupported condition operators or variables, target additions and malformed
+directives all throw. Unknown directives (`SecMarker`, ...) and other `ctl:` options
+(`ctl:ruleEngine`, ...) are skipped. Like every exclusion this is runtime tuning and
+never enters the compiled-data cache.
+
+::: tip Prefer `when:` over `ctl:` shape checks
+A runtime exclusion's condition can only pattern-match (`@rx` and friends), so it
+can check that a value *looks like* a JWT but not that it *is* one - an attacker can
+wrap a payload in the approved shape. When the value can be validated in PHP, prefer
+a conditional exclusion (`when:`) that verifies the signature.
+:::
+
 ### Manipulators (advanced)
 
 A manipulator transforms collected values before rules match against them - the escape
@@ -136,7 +228,12 @@ $matcher->addManipulator(
     static fn (string $variable, ?string $name, string $value): string
         => $name === 'fbclid' ? '' : $value,
 );
+$matcher->addManipulatorById(942431, $manipulator); // scoped to one rule
 ```
+
+Manipulators run after exclusions; global manipulator results are computed once
+per variable per request and shared across all rules, per-rule manipulators
+specialize from that shared result.
 
 ::: warning Manipulators weaken detection
 Whatever a manipulator removes or rewrites is invisible to every rule it applies to -
@@ -158,11 +255,19 @@ $config = $config->with(Presets::blocklist(ParanoiaLevel::Level1, logger: $logge
 ```
 
 The per-match log context carries `rule_id`, `severity`, `anomaly_score`,
-`paranoia_level`, `matched_variable` (e.g. `ARGS:utm_content`), `msg`, `fail_closed`,
+`paranoia_level`, `matched_variable` (e.g. `ARGS:utm_content`), `matched_value`
+(the value the rule fired on; `[redacted]` for credential targets), `msg`, `fail_closed`,
 `method`, `path` and `log_data` - the rule's CRS `logdata:` template expanded with the
 matched data (`%{TX.0}`, `%{MATCHED_VAR_NAME}`, `%{MATCHED_VAR}`); the warning context
 carries `total_score`, `anomaly_threshold`, `rule_ids`, `fail_closed`, `method` and
 `path`. Attacker-controlled context values are sanitized and length-bounded.
+
+When the matched target carries a credential - a cookie or an `Authorization`, `Cookie`,
+`Proxy-Authorization`, `X-Api-Key` or `X-Auth-Token` header - the value (and its `%{TX.n}`
+captures) is replaced with `[redacted]`, so secrets never reach the log or the
+`owasp_log_data` metadata. The target name (`%{MATCHED_VAR_NAME}`, e.g.
+`REQUEST_COOKIES:session`) is kept, so a redacted match still tells you which parameter to
+exclude.
 
 ## Writing Your Own Rules
 
@@ -354,6 +459,11 @@ is matched case-insensitively instead (a safe over-match, never an under-match).
 | `severity:'LEVEL'` | Anomaly score contribution: CRITICAL 5, ERROR 4, WARNING 3, NOTICE 2 (missing/unknown scores as CRITICAL) |
 | `logdata:'template'` | Log template expanded on a match (`%{TX.0}`, `%{MATCHED_VAR_NAME}`, `%{MATCHED_VAR}`) |
 | `tag:'name'` | Rule tags (repeatable); `paranoia-level/N` sets the level, tags drive `excludeTargetByTag()` |
+| `ctl:ruleRemove*` | Honored only in exclusion text applied via [`applyRuleExclusions()`](#crs-rule-exclusion-syntax); ignored in normal rule loading |
+
+Unlisted actions (`t:`, `setvar:`, `chain`, ...) are ignored during normal rule
+loading; a rule whose evaluation would depend on them (e.g. a chained rule) is
+dropped at import of the bundled snapshot.
 
 ### Line Continuation
 
@@ -513,52 +623,38 @@ SecRule REQUEST_URI "@rx (?i)(%2e%2e%2f|%2e%2e/)" \
 
 ## Production Configuration
 
-A production rule set covering the main attack categories:
+For production, use the bundled OWASP CRS preset - a filtered, tested snapshot of the full
+Core Rule Set covering every attack category - rather than hand-written rules. Pair it with a
+compiled-data cache so the rules are parsed once per deployment instead of on every request,
+and a PSR-3 logger so you can watch sub-threshold matches before they ever block:
 
 ```php
 use Flowd\Phirewall\Config;
-use Flowd\Phirewall\Config\Rule\BlocklistRule;
-use Flowd\PhirewallPresetOwaspCrs\Engine\CoreRuleSetMatcher;
-use Flowd\PhirewallPresetOwaspCrs\Engine\SecRuleLoader;
 use Flowd\Phirewall\Store\RedisCache;
+use Flowd\Phirewall\Support\CompiledDataCache;
+use Flowd\PhirewallPresetOwaspCrs\Presets;
+use Flowd\PhirewallPresetOwaspCrs\ParanoiaLevel;
 use Predis\Client as PredisClient;
 
 $redis = new PredisClient(getenv('REDIS_URL') ?: 'redis://localhost:6379');
 $config = new Config(new RedisCache($redis));
+$config->setCompiledDataCache(new CompiledDataCache('/var/cache/phirewall'));
 
-$rules = SecRuleLoader::fromString(<<<'CRS'
-# ── SQL Injection ──────────────────────────────────────────
-SecRule ARGS "@rx (?i)(\bunion\b.*\bselect\b|\bselect\b.*\bfrom\b)" \
-    "id:942100,phase:2,deny,msg:'SQL Injection'"
-SecRule ARGS "@rx ('\s*(or|and)\s*'|'\s*=\s*')" \
-    "id:942120,phase:2,deny,msg:'SQL Quote Injection'"
-
-# ── XSS ───────────────────────────────────────────────────
-SecRule ARGS "@rx (?i)<script[^>]*>" \
-    "id:941100,phase:2,deny,msg:'XSS Script Tag'"
-SecRule ARGS "@rx (?i)\bon\w+\s*=" \
-    "id:941110,phase:2,deny,msg:'XSS Event Handler'"
-SecRule ARGS "@rx (?i)javascript\s*:" \
-    "id:941120,phase:2,deny,msg:'XSS JavaScript Protocol'"
-
-# ── Remote Code Execution ─────────────────────────────────
-SecRule ARGS "@rx (?i)(eval|exec|system|shell_exec|passthru)\s*\(" \
-    "id:933100,phase:2,deny,msg:'PHP Code Injection'"
-SecRule ARGS "@rx (?i)(base64_decode|gzinflate|str_rot13)\s*\(" \
-    "id:933110,phase:2,deny,msg:'PHP Obfuscation'"
-
-# ── Path Traversal ────────────────────────────────────────
-SecRule REQUEST_URI "@rx \.\.\/" \
-    "id:930100,phase:2,deny,msg:'Path Traversal'"
-SecRule REQUEST_URI "@rx (?i)(%2e%2e%2f|%2e%2e/)" \
-    "id:930110,phase:2,deny,msg:'Encoded Path Traversal'"
-CRS);
-
-// Disable rules that cause false positives in your application
-// $rules->disable(941110); // XSS Event Handler
-
-$config->blocklists->addRule(new BlocklistRule('owasp', new CoreRuleSetMatcher($rules)));
+$config = $config->with(Presets::blocklist(
+    ParanoiaLevel::Level1,     // start low; raise only after tuning
+    anomalyThreshold: 5,       // the CRS standard inbound threshold
+    logger: $logger,           // sub-threshold matches are the tuning signal
+));
 ```
+
+Start at paranoia level 1 with the default threshold, watch the log for false-positive
+patterns, add [target exclusions](#target-exclusions), and only then raise the paranoia
+level - see [Tuning False Positives](#tuning-false-positives).
+
+Hand-writing a SecRule set (see [Writing Your Own Rules](#writing-your-own-rules)) is only
+for narrow, app-specific checks the CRS does not cover. Do not reimplement SQLi/XSS/RCE
+detection by hand: a naive pattern such as `@rx (?i)<script[^>]*>` misses the large majority
+of real payloads that the maintained CRS catches.
 
 ## File-Based Rule Management
 
@@ -575,6 +671,20 @@ $report = SecRuleLoader::fromStringWithReport(
     file_get_contents('/etc/phirewall/rules/custom.conf')
 );
 echo "Parsed: {$report['parsed']}, Skipped: {$report['skipped']}\n";
+```
+
+Tuning belongs in its own file: keep your
+[CRS rule exclusions](#crs-rule-exclusion-syntax) next to the application and
+apply them with `applyRuleExclusionsFromFile()` - the file is read eagerly, so
+a missing, unreadable or malformed tuning file fails at configuration time, not
+on the first request:
+
+```php
+$config = $config->with(Presets::blocklist(
+    ParanoiaLevel::Level1,
+    configure: static fn (CoreRuleSetMatcher $matcher) =>
+        $matcher->applyRuleExclusionsFromFile('/etc/phirewall/crs-exclusions.conf'),
+));
 ```
 
 ### @pmFromFile Support
@@ -594,7 +704,7 @@ insert into
 ```
 
 ::: warning
-`@pmFromFile` includes path traversal protection. Paths containing `..` are rejected to prevent loading files outside the rules directory.
+`@pmFromFile` confines the operand to the rules directory. Directory traversal (`..`), absolute paths, and stream-wrapper schemes (`file://`, `php://`, ...) are all rejected, so a rule cannot load a file from outside its directory. An operand that cannot be safely resolved fails closed - the rule blocks - rather than being silently skipped, so a misconfigured `@pmFromFile` cannot quietly disable protection.
 :::
 
 ## Architecture
