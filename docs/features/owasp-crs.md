@@ -66,9 +66,9 @@ up to date.
 
 Since preset package 0.5, evaluation follows the CRS anomaly-scoring model instead of
 blocking on the first match: every matching rule contributes its `severity` score
-(CRITICAL 5, ERROR 4, WARNING 3, NOTICE 2; rules without a recognizable severity score
-as CRITICAL), and the request is blocked once the accumulated score **reaches** the
-threshold (`score >= threshold`, default 5, the CRS standard inbound threshold).
+(CRITICAL 5, ERROR 4, WARNING 3, NOTICE 2; rules without a recognizable severity are
+scored as CRITICAL), and the request is blocked once the accumulated score **reaches**
+the threshold (`score >= threshold`, default 5, the CRS standard inbound threshold).
 
 In practice most bundled rules are CRITICAL and still block on their own; the
 WARNING-level rules (for example the `942430` restricted-character checks, a classic
@@ -434,11 +434,14 @@ nothing; the rule evaluates against its supported targets only.
 | `@rx` | `@rx pattern` | PCRE regular expression match |
 | `@contains` | `@contains text` | Case-insensitive substring match |
 | `@streq` | `@streq text` | Case-insensitive exact string match |
-| `@beginswith` | `@beginswith text` | Case-insensitive prefix match |
-| `@startswith` | `@startswith text` | Alias for `@beginswith` (phirewall extension; not a ModSecurity operator) |
-| `@endswith` | `@endswith text` | Case-insensitive suffix match |
+| `@beginsWith` | `@beginsWith text` | Case-insensitive prefix match |
+| `@startsWith` | `@startsWith text` | Alias for `@beginsWith` (phirewall extension; not a ModSecurity operator) |
+| `@endsWith` | `@endsWith text` | Case-insensitive suffix match |
 | `@pm` | `@pm word1 word2` | Phrase match (case-insensitive substring match against any of the listed phrases) |
 | `@pmFromFile` | `@pmFromFile file.txt` | Phrase match from a file (one phrase per line) |
+
+Operator names themselves are matched case-insensitively (`@beginswith` parses
+just as well); this page uses the canonical ModSecurity casing.
 
 The string operators (`@streq`, `@contains`, `@beginsWith`, `@endsWith`) match
 case-insensitively. In ModSecurity these operators are case-sensitive and case
@@ -750,8 +753,8 @@ Each CRS operator maps to an `OperatorEvaluatorInterface` implementation:
 | `@rx` | `RegexEvaluator` | PCRE match with auto-delimiters and Unicode mode; a subject-induced PCRE engine error fails closed. Oversized values are bounded upstream by the [per-value length cap](#per-value-length-cap), so the evaluator no longer truncates. |
 | `@contains` | `ContainsEvaluator` | Case-insensitive substring search |
 | `@streq` | `StringEqualEvaluator` | Case-insensitive exact match |
-| `@beginswith` / `@startswith` | `StartsWithEvaluator` | Case-insensitive prefix match |
-| `@endswith` | `EndsWithEvaluator` | Case-insensitive suffix match |
+| `@beginsWith` / `@startsWith` | `StartsWithEvaluator` | Case-insensitive prefix match |
+| `@endsWith` | `EndsWithEvaluator` | Case-insensitive suffix match |
 | `@pm` | `PhraseMatchEvaluator` | Multi-phrase case-insensitive match |
 | `@pmFromFile` | `PhraseMatchFromFileEvaluator` | Phrase match from file with path traversal protection |
 
@@ -846,7 +849,7 @@ $config->blocklists->addRule(new BlocklistRule('owasp', $matcher));
 |----------|:------------:|-------|
 | `@streq` | Low | Simple string comparison |
 | `@contains` | Low | Substring search |
-| `@startswith` / `@endswith` | Low | Prefix/suffix check |
+| `@startsWith` / `@endsWith` | Low | Prefix/suffix check |
 | `@pm` | Medium | Case-insensitive phrase matching (pre-compiled) |
 | `@rx` | High | PCRE regex (compiled on first use, cached) |
 
